@@ -14,7 +14,9 @@ def get_arguments():
     parser.add_argument('--filename', default='', help='Filename to save model and log to.')
     parser.add_argument('--log_precision', default=8, type=int, help='Number of decimals in the log files.')
     # Training Process
-    parser.add_argument('--step', default='run_dpd', help='Step to run.')
+    parser.add_argument('--step', default='run_dpd',
+                        choices=['train_pa', 'train_dpd', 'run_dpd', 'plot'],
+                        help='Step to run.')
     parser.add_argument('--eval_val', default=1, type=int, help='Whether evaluate val set during training.')
     parser.add_argument('--eval_test', default=1, type=int, help='Whether evaluate test set during training.')
     parser.add_argument('--accelerator', default='cuda', choices=["cpu", "cuda", "mps"], help='Accelerator types.')
@@ -85,5 +87,12 @@ def get_arguments():
     parser.add_argument('--window_size', default=4, type=int,
                         help='Window size for magnitude history in PNJANET')
 
+    # Plotting
+    parser.add_argument('--plot', action='store_true', default=False,
+                        help='Enable plot generation during training and inference.')
+    parser.add_argument('--plot_every', default=10, type=int,
+                        help='Generate per-epoch plots every N epochs (default: 1).')
+    parser.add_argument('--gif_duration', default=10.0, type=float,
+                        help='Duration of GIF animations in seconds (default: 10.0).')
 
     return parser.parse_args()

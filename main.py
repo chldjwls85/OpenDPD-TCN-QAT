@@ -8,6 +8,7 @@ import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 from steps import train_pa, train_dpd, run_dpd
+from steps import plot as plot_step
 from project import Project
 
 if __name__ == '__main__':
@@ -33,5 +34,12 @@ if __name__ == '__main__':
         print("# Step: Run DPD                                                                                    #")
         print("####################################################################################################")
         run_dpd.main(proj)
+
+    # Generate Comparison Plots (Without DPD vs With DPD)
+    elif proj.step == 'plot':
+        print("####################################################################################################")
+        print("# Step: Plot (Compare Without DPD vs With DPD)                                                     #")
+        print("####################################################################################################")
+        plot_step.main(proj)
     else:
         raise ValueError(f"The step '{proj.step}' is not supported.")

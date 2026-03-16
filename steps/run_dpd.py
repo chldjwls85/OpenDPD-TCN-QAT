@@ -92,3 +92,24 @@ def main(proj: Project):
             os.makedirs(os.path.join('dpd_out', proj.args.quant_dir_label))
     pa_in.to_csv(path_file_pa_in, index=False)
     print("DPD outputs saved to the ./dpd_out folder.")
+
+    ###########################################################################################################
+    # Plotting
+    ###########################################################################################################
+    if proj.plot:
+        from utils.plotting import get_plot_dir_run_dpd, generate_plots_run_dpd
+        from datasets.demodulator import Demodulator
+        import numpy as np
+        spec = {k: getattr(proj.args, k, None) for k in
+                ['input_signal_fs', 'nperseg', 'n_sub_ch', 'bw_main_ch', 'bw_sub_ch', 'scs']}
+        try:
+            demod = Demodulator.from_dataset(proj.dataset_name)
+        except Exception:
+            demod = None
+        plot_dir = get_plot_dir_run_dpd(proj.dataset_name, dpd_model_id)
+        dpd_out_np = dpd_out.numpy() if hasattr(dpd_out, 'numpy') else np.array(dpd_out)
+        try:
+            generate_plots_run_dpd(plot_dir, X_test, dpd_out_np, spec, demod=demod)
+            print(f"Plots saved to {plot_dir}")
+        except Exception as e:
+            print(f"Warning: Plot generation failed: {e}")

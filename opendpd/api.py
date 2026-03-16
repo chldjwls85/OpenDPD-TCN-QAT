@@ -21,6 +21,7 @@ from project import Project
 from steps import train_pa as train_pa_module
 from steps import train_dpd as train_dpd_module
 from steps import run_dpd as run_dpd_module
+from steps import plot as plot_module
 from arguments import get_arguments
 
 
@@ -35,11 +36,13 @@ def train_pa(
     accelerator: str = 'cpu',
     frame_length: int = 200,
     seed: int = 0,
+    plot: bool = False,
+    plot_every: int = 1,
     **kwargs
 ) -> Dict[str, Any]:
     """
     Train a Power Amplifier (PA) behavioral model.
-    
+
     Args:
         dataset_name: Name of the dataset in the `datasets/` folder (e.g., 'DPA_200MHz')
         dataset_path: Deprecated. Specify `dataset_name` after importing the dataset.
@@ -51,18 +54,20 @@ def train_pa(
         accelerator: Device to use ('cpu', 'cuda', or 'mps')
         frame_length: Length of signal frames
         seed: Random seed for reproducibility
+        plot: Enable plot generation during training
+        plot_every: Generate per-epoch plots every N epochs
         **kwargs: Additional arguments passed to the training configuration
-        
+
     Returns:
         Dictionary containing training results and model path
-        
+
     Examples:
         >>> import opendpd
         >>> results = opendpd.train_pa(dataset_name='DPA_200MHz', n_epochs=50)
         >>> print(f"Model saved at: {results['model_path']}")
-        
-        >>> # Train with custom dataset
-        >>> results = opendpd.train_pa(dataset_path='/path/to/my_dataset.csv', PA_backbone='dgru')
+
+        >>> # Train with plots
+        >>> results = opendpd.train_pa(dataset_name='DPA_200MHz', n_epochs=50, plot=True)
     """
     # Prepare arguments
     sys.argv = ['opendpd']
@@ -88,15 +93,18 @@ def train_pa(
     sys.argv.extend(['--accelerator', accelerator])
     sys.argv.extend(['--frame_length', str(frame_length)])
     sys.argv.extend(['--seed', str(seed)])
-    
+    if plot:
+        sys.argv.append('--plot')
+    sys.argv.extend(['--plot_every', str(plot_every)])
+
     # Add any additional keyword arguments
     for key, value in kwargs.items():
         sys.argv.extend([f'--{key}', str(value)])
-    
+
     # Create project and run training
     proj = Project()
     train_pa_module.main(proj)
-    
+
     return {
         'status': 'completed',
         'model_path': proj.path_save_file_best,
@@ -119,14 +127,13 @@ def train_dpd(
     seed: int = 0,
     thx: float = 0.0,
     thh: float = 0.0,
+    plot: bool = False,
+    plot_every: int = 1,
     **kwargs
 ) -> Dict[str, Any]:
     """
     Train a Digital Pre-Distortion (DPD) model.
-    
-    This function trains a DPD model using a pre-trained PA model. The PA model
-    must be trained first using train_pa().
-    
+
     Args:
         dataset_name: Name of the dataset in the `datasets/` folder
         dataset_path: Deprecated. Specify `dataset_name` after importing the dataset.
@@ -142,18 +149,16 @@ def train_dpd(
         seed: Random seed for reproducibility
         thx: Threshold for input deltas (for delta-based models)
         thh: Threshold for hidden state deltas (for delta-based models)
+        plot: Enable plot generation during training
+        plot_every: Generate per-epoch plots every N epochs
         **kwargs: Additional arguments passed to the training configuration
-        
+
     Returns:
         Dictionary containing training results and model path
-        
+
     Examples:
         >>> import opendpd
-        >>> # First train PA model
-        >>> pa_results = opendpd.train_pa(dataset_name='DPA_200MHz')
-        >>> # Then train DPD model
-        >>> dpd_results = opendpd.train_dpd(dataset_name='DPA_200MHz', n_epochs=50)
-        >>> print(f"DPD model saved at: {dpd_results['model_path']}")
+        >>> dpd_results = opendpd.train_dpd(dataset_name='DPA_200MHz', n_epochs=50, plot=True)
     """
     # Prepare arguments
     sys.argv = ['opendpd']
@@ -183,15 +188,18 @@ def train_dpd(
     sys.argv.extend(['--seed', str(seed)])
     sys.argv.extend(['--thx', str(thx)])
     sys.argv.extend(['--thh', str(thh)])
-    
+    if plot:
+        sys.argv.append('--plot')
+    sys.argv.extend(['--plot_every', str(plot_every)])
+
     # Add any additional keyword arguments
     for key, value in kwargs.items():
         sys.argv.extend([f'--{key}', str(value)])
-    
+
     # Create project and run training
     proj = Project()
     train_dpd_module.main(proj)
-    
+
     return {
         'status': 'completed',
         'model_path': proj.path_save_file_best,
@@ -205,31 +213,32 @@ def run_dpd(
     DPD_backbone: str = 'deltagru_tcnskip',
     DPD_hidden_size: int = 15,
     accelerator: str = 'cpu',
+    plot: bool = False,
     **kwargs
 ) -> Dict[str, Any]:
     """
     Run the trained DPD model to generate pre-distorted signals.
-    
+
     Args:
         dataset_name: Name of the dataset in the `datasets/` folder
         dataset_path: Deprecated. Specify `dataset_name` after importing the dataset.
         DPD_backbone: Type of DPD backbone (must match trained model)
         DPD_hidden_size: Hidden size of DPD model (must match trained model)
         accelerator: Device to use ('cpu', 'cuda', or 'mps')
+        plot: Enable plot generation
         **kwargs: Additional arguments
-        
+
     Returns:
         Dictionary containing output paths and results
-        
+
     Examples:
         >>> import opendpd
-        >>> results = opendpd.run_dpd(dataset_name='DPA_200MHz')
-        >>> print(f"Output saved at: {results['output_path']}")
+        >>> results = opendpd.run_dpd(dataset_name='DPA_200MHz', plot=True)
     """
     # Prepare arguments
     sys.argv = ['opendpd']
     sys.argv.extend(['--step', 'run_dpd'])
-    
+
     if dataset_path:
         raise ValueError(
             "run_dpd no longer accepts dataset_path. Please create an OpenDPD "
@@ -241,22 +250,83 @@ def run_dpd(
     else:
         raise ValueError("run_dpd requires dataset_name."
                          " Create a dataset first with create_dataset().")
-    
+
     sys.argv.extend(['--DPD_backbone', DPD_backbone])
     sys.argv.extend(['--DPD_hidden_size', str(DPD_hidden_size)])
     sys.argv.extend(['--accelerator', accelerator])
-    
+    if plot:
+        sys.argv.append('--plot')
+
     # Add any additional keyword arguments
     for key, value in kwargs.items():
         sys.argv.extend([f'--{key}', str(value)])
-    
+
     # Create project and run DPD
     proj = Project()
     run_dpd_module.main(proj)
-    
+
     return {
         'status': 'completed',
         'output_path': f'dpd_out/{dataset_name}' if dataset_name else 'dpd_out/',
+    }
+
+
+def plot_dpd(
+    dataset_name: Optional[str] = None,
+    PA_backbone: str = 'gru',
+    PA_hidden_size: int = 23,
+    DPD_backbone: str = 'deltagru_tcnskip',
+    DPD_hidden_size: int = 15,
+    accelerator: str = 'cpu',
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Generate comparison plots: PA output without DPD vs with DPD.
+
+    This function loads trained PA and DPD models, runs inference on the test
+    set for both scenarios, and generates side-by-side comparison plots including
+    PSD, AM/AM, AM/PM, constellation diagrams, waveforms, and a metrics summary.
+
+    Args:
+        dataset_name: Name of the dataset in the `datasets/` folder
+        PA_backbone: Type of PA backbone (must match the pre-trained PA model)
+        PA_hidden_size: Hidden size of PA model (must match the pre-trained PA model)
+        DPD_backbone: Type of DPD backbone (must match trained model)
+        DPD_hidden_size: Hidden size of DPD model (must match trained model)
+        accelerator: Device to use ('cpu', 'cuda', or 'mps')
+        **kwargs: Additional arguments
+
+    Returns:
+        Dictionary containing plot directory path
+
+    Examples:
+        >>> import opendpd
+        >>> results = opendpd.plot_dpd(dataset_name='DPA_200MHz')
+        >>> print(f"Plots saved at: {results['plot_dir']}")
+    """
+    sys.argv = ['opendpd']
+    sys.argv.extend(['--step', 'plot'])
+
+    if dataset_name:
+        sys.argv.extend(['--dataset_name', dataset_name])
+    else:
+        raise ValueError("plot_dpd requires dataset_name.")
+
+    sys.argv.extend(['--PA_backbone', PA_backbone])
+    sys.argv.extend(['--PA_hidden_size', str(PA_hidden_size)])
+    sys.argv.extend(['--DPD_backbone', DPD_backbone])
+    sys.argv.extend(['--DPD_hidden_size', str(DPD_hidden_size)])
+    sys.argv.extend(['--accelerator', accelerator])
+
+    for key, value in kwargs.items():
+        sys.argv.extend([f'--{key}', str(value)])
+
+    proj = Project()
+    plot_module.main(proj)
+
+    return {
+        'status': 'completed',
+        'plot_dir': f'plots/{dataset_name}/compare/',
     }
 
 

@@ -20,6 +20,8 @@ wheels/
 .installed.cfg
 *.egg
 build/
+plots/
+datasets/MATLAB
 
 # Virtual environments
 venv/

@@ -14,7 +14,7 @@ __license__ = "Apache-2.0"
 __email__ = "chang.gao@tudelft.nl"
 
 # Import main API functions
-from .api import train_pa, train_dpd, run_dpd, load_dataset, create_dataset
+from .api import train_pa, train_dpd, run_dpd, plot_dpd, load_dataset, create_dataset
 
 # Import core classes for advanced users
 from .api import OpenDPDTrainer
@@ -22,8 +22,9 @@ from .api import OpenDPDTrainer
 # Define what gets imported with "from opendpd import *"
 __all__ = [
     'train_pa',
-    'train_dpd', 
+    'train_dpd',
     'run_dpd',
+    'plot_dpd',
     'load_dataset',
     'create_dataset',
     'OpenDPDTrainer',

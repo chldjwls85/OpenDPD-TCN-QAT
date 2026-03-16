@@ -1,13 +1,16 @@
 {
+    "description": "4-carrier 40MHz signal, DPA device, 160MHz total bandwidth. Sampling rate 640MHz is non-standard; OFDM constellation demod requires resampling.",
     "dataset_format": "split_csv",
     "split_ratios": {
         "train": 0.6,
         "val": 0.2,
         "test": 0.2
     },
+
     "input_signal_fs": 640e6,
     "bw_main_ch": 160e6,
     "bw_sub_ch": 40e6,
     "n_sub_ch": 4,
-    "nperseg": 16384
+    "nperseg": 16384,
+    "modulation": "1024QAM"
 }

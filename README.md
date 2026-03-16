@@ -9,6 +9,58 @@
 
 We invite you to contribute new backbone networks, pre-trained models, or measured PA datasets. This repository contains the complete training pipeline for OpenDPD using baseband signals from digital transmitters.
 
+# What's New in OpenDPD V2.1
+
+**OpenDPD V2.1** introduces a comprehensive visualization and plotting system that lets you observe model training dynamics in real time and generate publication-quality figures.
+
+### Real-Time Training Visualization
+- **Per-epoch plot generation** during both PA modeling (`train_pa`) and DPD learning (`train_dpd`). Enable with the `--plot` flag and control frequency with `--plot_every N`.
+- **Plot types include:** PSD (Power Spectral Density), AM/AM, AM/PM, constellation diagrams, waveform overlays, and prediction error plots — generated for both validation and test sets at each epoch.
+- **Fixed-axis re-rendering:** After training completes, all epoch plots are automatically re-rendered with globally consistent axis limits for fair visual comparison across epochs.
+
+### Animated GIF Generation
+- **Automatic GIF animations** are created from per-epoch plots at the end of training, producing smooth animations that show how the model learns over time.
+- **Configurable duration** via `--gif_duration` (default: 10 seconds). For 100 epochs at 10 seconds, this yields 10 fps for smooth playback.
+- GIFs are generated for every plot type (PSD, AM/AM, AM/PM, constellation, waveform, error) and overview panels.
+
+![DPD Training Animation](pics/overview_test.gif)
+
+### Interactive Training Dashboard
+- An **HTML dashboard** (`dashboard.html`) is generated after training, providing an interactive view of all epoch plots with a slider to scrub through epochs.
+
+### Training Curve Plots
+- **Loss, ACLR, EVM, and NMSE curves** are plotted across all epochs at the end of training, saved under `training_curves/`.
+
+### Comparison Plots (New `plot` Step)
+- A new **`--step plot`** command generates side-by-side comparison figures of PA output **without DPD vs. with DPD**, including PSD, AM/AM, AM/PM, constellation, waveform, and a metrics summary table.
+- Available via CLI (`python main.py --step plot`) and the Python API (`opendpd.plot_dpd()`).
+
+### OFDM Constellation Demodulation
+- A new **`Demodulator`** module (`datasets/demodulator.py`) supports OFDM demodulation for constellation diagram generation, with per-dataset configurations for APA and DPA signal types.
+
+### Python API Enhancements
+- `opendpd.train_pa()` and `opendpd.train_dpd()` now accept `plot=True` and `plot_every=N` parameters.
+- New `opendpd.plot_dpd()` function for generating comparison plots from Python.
+
+### Example Usage
+```bash
+# Train DPD with per-epoch plotting and 10-second GIF animations
+python main.py --dataset_name DPA_200MHz --step train_dpd --plot --plot_every 1 --gif_duration 10.0 --accelerator cuda
+
+# Generate comparison plots (without DPD vs. with DPD)
+python main.py --dataset_name DPA_200MHz --step plot --accelerator cuda
+```
+
+```python
+import opendpd
+
+# Train with visualization
+opendpd.train_dpd(dataset_name='DPA_200MHz', n_epochs=100, plot=True, plot_every=1)
+
+# Generate comparison plots
+opendpd.plot_dpd(dataset_name='DPA_200MHz')
+```
+
 # Quick Start
 Start with the Google Colab tutorial by clicking the badge below for a zero-install guided walkthrough of OpenDPD’s workflow.
 

@@ -1,13 +1,19 @@
 {
+    "description": "5-carrier LTE 20MHz, DPA device, 100MHz total bandwidth. Sampling rate 800MHz is non-standard for LTE; OFDM constellation demod requires resampling to 491.52MHz.",
     "dataset_format": "split_csv",
     "split_ratios": {
         "train": 0.6,
         "val": 0.2,
         "test": 0.2
     },
+
     "input_signal_fs": 800e6,
-    "input_signal_bw": 100e6,
-    "input_signal_sub_ch_bw": 20e6,
+    "bw_main_ch": 100e6,
+    "bw_sub_ch": 20e6,
     "n_sub_ch": 5,
-    "nperseg": 2560
+    "nperseg": 1280,
+
+    "standard": "LTE",
+    "modulation": "64QAM",
+    "scs": 15e3
 }

@@ -296,10 +296,67 @@ class Project:
                                                             min_lr=self.lr_end)
         return optimizer, lr_scheduler
 
+    @staticmethod
+    def _run_model_chunked(model, full_iq, device, chunk_size=16384):
+        """Run a model on full IQ data in chunks to avoid GPU memory issues."""
+        import numpy as np
+        n_total = full_iq.shape[0]
+        outputs = []
+        for start in range(0, n_total, chunk_size):
+            end = min(start + chunk_size, n_total)
+            chunk = torch.Tensor(full_iq[start:end]).unsqueeze(0).to(device)
+            out = model(chunk)
+            outputs.append(torch.squeeze(out).cpu().numpy())
+        return np.concatenate(outputs, axis=0)
+
+    def _compute_full_const_data(self, net, full_input_iq, full_output_iq, full_pa_only_c):
+        """Compute full-sequence constellation data for APA datasets.
+
+        Runs the full dataset input through the current model to produce
+        complex signals long enough for proper OFDM demodulation.
+
+        Returns:
+            dict with 'input_c' and model-specific complex signal arrays.
+        """
+        import numpy as np
+
+        full_input_c = full_input_iq[:, 0] + 1j * full_input_iq[:, 1]
+        result = {'input_c': full_input_c}
+
+        was_training = net.training
+        net.eval()
+        with torch.no_grad():
+            if self.step == 'train_pa':
+                pred = self._run_model_chunked(net, full_input_iq, self.device)
+                result['pred_c'] = pred[:, 0] + 1j * pred[:, 1]
+                if full_output_iq is not None:
+                    result['gt_c'] = full_output_iq[:, 0] + 1j * full_output_iq[:, 1]
+            elif self.step == 'train_dpd':
+                cascaded = self._run_model_chunked(net, full_input_iq, self.device)
+                result['cascaded_c'] = cascaded[:, 0] + 1j * cascaded[:, 1]
+                if full_pa_only_c is not None:
+                    result['pa_only_c'] = full_pa_only_c
+        if was_training:
+            net.train()
+
+        return result
+
     def train(self, net: nn.Module, criterion: Callable, optimizer: optim.Optimizer, lr_scheduler,
-              train_loader: DataLoader, val_loader: DataLoader, test_loader: DataLoader, best_model_metric: str) -> None:
+              train_loader: DataLoader, val_loader: DataLoader, test_loader: DataLoader,
+              best_model_metric: str, plot_dir: str = None, input_data_val=None,
+              input_data_test=None, pa_only_data=None, metadata=None,
+              full_input_iq=None, full_output_iq=None,
+              full_pa_only_c=None) -> None:
         # Timer
         start_time = time.time()
+
+        # Track history for training curve plots
+        training_history = []
+
+        # Cache epoch prediction data for fixed-axis re-rendering
+        epoch_plot_cache = {}
+        best_epoch_cache = {}
+
         # Epoch loop
         print("Starting training...")
         for epoch in range(self.n_epochs):
@@ -317,24 +374,28 @@ class Project:
             # -----------
             # Validation
             # -----------
+            val_prediction = None
+            val_ground_truth = None
             if self.eval_val:
-                _, prediction, ground_truth = net_eval(log=self.log_val,
-                                                       net=net,
-                                                       criterion=criterion,
-                                                       dataloader=val_loader,
-                                                       device=self.device)
-                self.log_val = calculate_metrics(self.args, self.log_val, prediction, ground_truth)
+                _, val_prediction, val_ground_truth = net_eval(log=self.log_val,
+                                                               net=net,
+                                                               criterion=criterion,
+                                                               dataloader=val_loader,
+                                                               device=self.device)
+                self.log_val = calculate_metrics(self.args, self.log_val, val_prediction, val_ground_truth)
 
             # -----------
             # Test
             # -----------
+            test_prediction = None
+            test_ground_truth = None
             if self.eval_test:
-                _, prediction, ground_truth = net_eval(log=self.log_test,
-                                                       net=net,
-                                                       criterion=criterion,
-                                                       dataloader=test_loader,
-                                                       device=self.device)
-                self.log_test = calculate_metrics(self.args, self.log_test, prediction, ground_truth)
+                _, test_prediction, test_ground_truth = net_eval(log=self.log_test,
+                                                                 net=net,
+                                                                 criterion=criterion,
+                                                                 dataloader=test_loader,
+                                                                 device=self.device)
+                self.log_test = calculate_metrics(self.args, self.log_test, test_prediction, test_ground_truth)
 
             ###########################################################################################################
             # Logging & Saving
@@ -349,9 +410,91 @@ class Project:
             # Write Log
             self.logger.write_log(self.log_all)
 
-            # Save best model
+            # Save best model and detect if a new best was found
             best_net = net.dpd_model if self.step == 'train_dpd' else net
+            prev_best = self.logger.best_val_metric
             self.logger.save_best_model(net=best_net, epoch=epoch, val_stat=self.log_val, metric_name=best_model_metric)
+            is_new_best = (prev_best is None) or (self.logger.best_val_metric != prev_best)
+
+            ###########################################################################################################
+            # Plotting
+            ###########################################################################################################
+            if self.plot and plot_dir is not None:
+                from utils.plotting import generate_epoch_plots_train_pa, generate_epoch_plots_train_dpd
+                from datasets.demodulator import Demodulator
+                spec = {k: getattr(self.args, k, None) for k in
+                        ['input_signal_fs', 'nperseg', 'n_sub_ch', 'bw_main_ch', 'bw_sub_ch', 'scs']}
+                try:
+                    demod = Demodulator.from_dataset(self.args.dataset_name)
+                except Exception:
+                    demod = None
+
+                should_plot_epoch = (epoch % self.plot_every == 0 or epoch == self.n_epochs - 1)
+
+                # Compute full-sequence constellation data for APA datasets
+                full_const_data = None
+                if full_input_iq is not None and (should_plot_epoch or is_new_best):
+                    full_const_data = self._compute_full_const_data(
+                        net, full_input_iq, full_output_iq, full_pa_only_c)
+
+                # Determine which subdirs to write into
+                plot_targets = []
+                if should_plot_epoch:
+                    plot_targets.append(('epoch', plot_dir))
+                if is_new_best:
+                    plot_targets.append(('best', plot_dir))
+
+                for target_type, base_dir in plot_targets:
+                    try:
+                        if self.step == 'train_pa':
+                            if self.eval_val and val_prediction is not None:
+                                generate_epoch_plots_train_pa(
+                                    base_dir, epoch, val_prediction, val_ground_truth,
+                                    input_data_val, 'val', spec, demod=demod,
+                                    subfolder='best' if target_type == 'best' else None,
+                                    full_const_data=full_const_data)
+                            if self.eval_test and test_prediction is not None:
+                                generate_epoch_plots_train_pa(
+                                    base_dir, epoch, test_prediction, test_ground_truth,
+                                    input_data_test, 'test', spec, demod=demod,
+                                    subfolder='best' if target_type == 'best' else None,
+                                    full_const_data=full_const_data)
+                        elif self.step == 'train_dpd':
+                            if self.eval_val and val_prediction is not None:
+                                generate_epoch_plots_train_dpd(
+                                    base_dir, epoch, val_prediction, val_ground_truth,
+                                    'val', spec, demod=demod,
+                                    subfolder='best' if target_type == 'best' else None,
+                                    pa_only_prediction=pa_only_data.get('val') if pa_only_data else None,
+                                    full_const_data=full_const_data)
+                            if self.eval_test and test_prediction is not None:
+                                generate_epoch_plots_train_dpd(
+                                    base_dir, epoch, test_prediction, test_ground_truth,
+                                    'test', spec, demod=demod,
+                                    subfolder='best' if target_type == 'best' else None,
+                                    pa_only_prediction=pa_only_data.get('test') if pa_only_data else None,
+                                    full_const_data=full_const_data)
+                    except Exception as e:
+                        print(f"Warning: Plot generation failed at epoch {epoch} ({target_type}): {e}")
+
+                # Cache prediction data for fixed-axis re-rendering
+                if should_plot_epoch:
+                    cache_entry = {}
+                    if self.eval_val and val_prediction is not None:
+                        cache_entry['val'] = val_prediction.copy()
+                    if self.eval_test and test_prediction is not None:
+                        cache_entry['test'] = test_prediction.copy()
+                    epoch_plot_cache[epoch] = cache_entry
+                if is_new_best:
+                    best_epoch_cache.clear()
+                    if self.eval_val and val_prediction is not None:
+                        best_epoch_cache['val'] = val_prediction.copy()
+                    if self.eval_test and test_prediction is not None:
+                        best_epoch_cache['test'] = test_prediction.copy()
+                    best_epoch_cache['epoch'] = epoch
+
+            # Track history for training curves
+            training_history.append(dict(self.log_all))
 
             ###########################################################################################################
             # Learning Rate Schedule
@@ -360,6 +503,78 @@ class Project:
             lr_scheduler_criteria = self.log_val[best_model_metric]
             if self.lr_schedule:
                 lr_scheduler.step(lr_scheduler_criteria)
+
+        # Generate training curve plots at end of training
+        if self.plot and plot_dir is not None and training_history:
+            from utils.plotting import plot_training_curves
+            curves_dir = os.path.join(plot_dir, 'training_curves')
+            try:
+                plot_training_curves(training_history, curves_dir)
+            except Exception as e:
+                print(f"Warning: Training curve plot generation failed: {e}")
+
+        # Re-render epoch plots with fixed axis limits
+        if self.plot and plot_dir is not None and epoch_plot_cache:
+            from utils.plotting import compute_global_limits, rerender_epochs_fixed_axes
+            spec = {k: getattr(self.args, k, None) for k in
+                    ['input_signal_fs', 'nperseg', 'n_sub_ch', 'bw_main_ch', 'bw_sub_ch', 'scs']}
+            # Build constants dict
+            constants = {}
+            if self.eval_val and val_ground_truth is not None:
+                constants['val_ground_truth'] = val_ground_truth
+            if self.eval_test and test_ground_truth is not None:
+                constants['test_ground_truth'] = test_ground_truth
+            if input_data_val is not None:
+                constants['input_data_val'] = input_data_val
+            if input_data_test is not None:
+                constants['input_data_test'] = input_data_test
+            if pa_only_data is not None:
+                if 'val' in pa_only_data:
+                    constants['pa_only_val'] = pa_only_data['val']
+                if 'test' in pa_only_data:
+                    constants['pa_only_test'] = pa_only_data['test']
+            # Add best epoch to cache if not already there
+            if best_epoch_cache and best_epoch_cache.get('epoch') is not None:
+                best_ep = best_epoch_cache['epoch']
+                if best_ep not in epoch_plot_cache:
+                    epoch_plot_cache[best_ep] = {
+                        k: v for k, v in best_epoch_cache.items() if k != 'epoch'
+                    }
+            try:
+                from datasets.demodulator import Demodulator as _Demod
+                try:
+                    _demod = _Demod.from_dataset(self.args.dataset_name)
+                except Exception:
+                    _demod = None
+                fixed_limits = compute_global_limits(epoch_plot_cache, constants, self.step, spec)
+                # Compute full-sequence constellation data for re-rendering
+                rerender_full_const = None
+                if full_input_iq is not None:
+                    rerender_full_const = self._compute_full_const_data(
+                        net, full_input_iq, full_output_iq, full_pa_only_c)
+                rerender_epochs_fixed_axes(plot_dir, epoch_plot_cache, constants,
+                                           self.step, spec, fixed_limits, demod=_demod,
+                                           full_const_data=rerender_full_const)
+            except Exception as e:
+                print(f"Warning: Fixed-axis re-rendering failed: {e}")
+                import traceback
+                traceback.print_exc()
+
+        # Generate interactive dashboard
+        if self.plot and plot_dir is not None and metadata is not None:
+            from utils.plotting import generate_dashboard_html
+            try:
+                generate_dashboard_html(plot_dir, self.step, metadata)
+            except Exception as e:
+                print(f"Warning: Dashboard generation failed: {e}")
+
+        # Generate GIF animations
+        if self.plot and plot_dir is not None:
+            from utils.plotting import generate_epoch_gifs
+            try:
+                generate_epoch_gifs(plot_dir, gif_duration=self.gif_duration)
+            except Exception as e:
+                print(f"Warning: GIF generation failed: {e}")
 
         print("Training Completed...")
         print(" ")
