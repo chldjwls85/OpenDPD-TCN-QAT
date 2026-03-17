@@ -89,25 +89,23 @@ def main(proj: Project):
         import numpy as np
         plot_dir = get_plot_dir_train_dpd(proj.dataset_name, pa_model_id, dpd_model_id)
 
-        # Compute PA-only response for plotting (PA is frozen, so this is constant)
-        pa_only_data = {}
-        net_pa_inference = net_cas.pa_model
-        net_pa_inference.eval()
-        with torch.no_grad():
-            if proj.eval_val:
-                input_data_val = np.concatenate([b[0].numpy() for b in val_loader], axis=0)
-                val_input_t = torch.tensor(input_data_val, dtype=torch.float32).to(proj.device)
-                pa_only_data['val'] = net_pa_inference(val_input_t).cpu().numpy()
-            if proj.eval_test:
-                input_data_test = np.concatenate([b[0].numpy() for b in test_loader], axis=0)
-                test_input_t = torch.tensor(input_data_test, dtype=torch.float32).to(proj.device)
-                pa_only_data['test'] = net_pa_inference(test_input_t).cpu().numpy()
+        # Load actual measured PA output from CSV for plotting
+        # (not the PA model prediction, which smooths out spectral regrowth)
+        from modules.data_collector import load_dataset as _load_raw
+        _, _, _, y_val_raw, _, y_test_raw = _load_raw(dataset_name=proj.dataset_name)
+        nperseg = proj.args.nperseg
 
-            # Load full dataset for APA constellation plotting
-            # Use measured PA output from CSV (not PA model prediction)
-            if needs_full_seq_constellation(proj.dataset_name):
-                full_input_iq, full_output_iq = load_full_dataset_iq(proj.dataset_name)
-                full_pa_only_c = full_output_iq[:, 0] + 1j * full_output_iq[:, 1]
+        pa_only_data = {}
+        if proj.eval_val:
+            n_seg = len(y_val_raw) // nperseg
+            pa_only_data['val'] = y_val_raw[:n_seg * nperseg].reshape(n_seg, nperseg, 2)
+        if proj.eval_test:
+            n_seg = len(y_test_raw) // nperseg
+            pa_only_data['test'] = y_test_raw[:n_seg * nperseg].reshape(n_seg, nperseg, 2)
+
+        # Load full dataset for full-sequence plotting (constellation, PSD, AM/AM, AM/PM)
+        full_input_iq, full_output_iq = load_full_dataset_iq(proj.dataset_name)
+        full_pa_only_c = full_output_iq[:, 0] + 1j * full_output_iq[:, 1]
 
     # Build metadata for dashboard
     metadata = {

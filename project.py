@@ -431,7 +431,7 @@ class Project:
 
                 should_plot_epoch = (epoch % self.plot_every == 0 or epoch == self.n_epochs - 1)
 
-                # Compute full-sequence constellation data for APA datasets
+                # Compute full-sequence data for plotting (PSD, AM/AM, AM/PM, constellation)
                 full_const_data = None
                 if full_input_iq is not None and (should_plot_epoch or is_new_best):
                     full_const_data = self._compute_full_const_data(

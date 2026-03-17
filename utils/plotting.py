@@ -926,10 +926,29 @@ def generate_epoch_plots_train_dpd(plot_dir, epoch, prediction, ground_truth,
         pa_flat = pa_only_prediction.reshape(-1, 2)
         pa_c = IQ_to_complex(pa_flat[np.newaxis, :])[0]
 
+    # For APA datasets, use full-dataset signals for PSD, AM/AM, AM/PM
+    # so the plots reflect the entire signal, not just a val/test split.
+    use_full = full_const_data is not None
+    if use_full:
+        full_cas_c = full_const_data['cascaded_c']
+        full_pa_c = full_const_data.get('pa_only_c')
+        full_in_c = full_const_data['input_c']
+        # Convert complex -> IQ [N, 2] for AM/AM and AM/PM
+        full_cas_flat = np.stack([full_cas_c.real, full_cas_c.imag], axis=-1)
+        full_pa_flat = np.stack([full_pa_c.real, full_pa_c.imag], axis=-1) if full_pa_c is not None else None
+        full_in_flat = np.stack([full_in_c.real, full_in_c.imag], axis=-1)
+
+    # Select data source: full dataset for APA, val/test split otherwise
+    psd_pa_c = full_pa_c if (use_full and full_pa_c is not None) else (pa_c if has_pa else None)
+    psd_cas_c = full_cas_c if use_full else pred_c
+    amam_ref_flat = full_in_flat if use_full else gt_flat
+    amam_pa_flat = full_pa_flat if (use_full and full_pa_flat is not None) else (pa_flat if has_pa else None)
+    amam_cas_flat = full_cas_flat if use_full else pred_flat
+
     # Epoch label for titles (None for 'best' subfolder)
     ep = epoch if subfolder != 'best' else None
 
-    # Pre-compute EVM for PSD annotation
+    # Pre-compute EVM for PSD annotation (always from val/test split for metrics accuracy)
     evm_info = []
     if has_pa:
         evm_pa = _compute_evm_for_iq(pa_flat, gt_flat, fs, nperseg, bw_main_ch, n_sub_ch)
@@ -940,10 +959,13 @@ def generate_epoch_plots_train_dpd(plot_dir, epoch, prediction, ground_truth,
         evm_info.append(('DPD+PA', evm_cas))
 
     # --- PSD (2-trace: PA Only vs Cascaded, no Linear Target) ---
-    if has_pa:
+    if has_pa or use_full:
         fig, ax = plt.subplots(figsize=(10, 5))
-        for sig_c, lbl, color, ls in [(pa_c, 'PA Only (w/o DPD)', C_GT, '-'),
-                                       (pred_c, 'Cascaded (DPD+PA)', C_PRED, '-')]:
+        traces = []
+        if psd_pa_c is not None:
+            traces.append((psd_pa_c, 'PA Only (w/o DPD)', C_GT, '-'))
+        traces.append((psd_cas_c, 'Cascaded (DPD+PA)', C_PRED, '-'))
+        for sig_c, lbl, color, ls in traces:
             sig_2d = _ensure_2d_segments(sig_c, nperseg)
             freq, ps = power_spectrum(sig_2d, fs=fs, nperseg=nperseg)
             ps_db = 10 * np.log10(ps / np.max(ps) + 1e-30)
@@ -961,8 +983,11 @@ def generate_epoch_plots_train_dpd(plot_dir, epoch, prediction, ground_truth,
         ax.legend()
         ax.grid(alpha=0.2, linestyle='--')
         # ACLR + EVM annotation
-        _annotate_aclr(ax,
-                       [('PA Only', pa_c), ('DPD+PA', pred_c)],
+        aclr_traces = []
+        if psd_pa_c is not None:
+            aclr_traces.append(('PA Only', psd_pa_c))
+        aclr_traces.append(('DPD+PA', psd_cas_c))
+        _annotate_aclr(ax, aclr_traces,
                        fs, nperseg, bw_main_ch, n_sub_ch,
                        evm_info=evm_info if evm_info else None)
         fig.tight_layout()
@@ -973,14 +998,17 @@ def generate_epoch_plots_train_dpd(plot_dir, epoch, prediction, ground_truth,
                  fs=fs, nperseg=nperseg)
 
     # --- AM/AM (2-scatter inline when PA-only available) ---
-    if has_pa:
+    if has_pa or use_full:
         fig, ax = plt.subplots(figsize=(6, 6))
-        amp_in = _iq_to_amp_phase(gt_flat)[0].flatten()
+        amp_in = _iq_to_amp_phase(amam_ref_flat)[0].flatten()
         max_in = np.max(amp_in) + 1e-30
         idx = np.random.choice(len(amp_in), min(len(amp_in), 20000), replace=False)
-        for out_flat, lbl, clr in [(pa_flat, 'PA Only (w/o DPD)', C_GT),
-                                    (pred_flat, 'Cascaded (DPD+PA)', C_PRED)]:
-            amp_out = _iq_to_amp_phase(out_flat)[0].flatten()
+        scatter_pairs = []
+        if amam_pa_flat is not None:
+            scatter_pairs.append((amam_pa_flat, 'PA Only (w/o DPD)', C_GT))
+        scatter_pairs.append((amam_cas_flat, 'Cascaded (DPD+PA)', C_PRED))
+        for out_flat_i, lbl, clr in scatter_pairs:
+            amp_out = _iq_to_amp_phase(out_flat_i)[0].flatten()
             max_out = np.max(amp_out) + 1e-30
             ax.scatter(amp_in[idx] / max_in, amp_out[idx] / max_out,
                        s=1, alpha=C_SCATTER_ALPHA, color=clr, label=lbl,
@@ -1000,16 +1028,19 @@ def generate_epoch_plots_train_dpd(plot_dir, epoch, prediction, ground_truth,
                   label='Cascaded (DPD+PA)')
 
     # --- AM/PM (2-scatter inline when PA-only available) ---
-    if has_pa:
+    if has_pa or use_full:
         fig, ax = plt.subplots(figsize=(8, 5))
-        amp_in, phase_in = _iq_to_amp_phase(gt_flat)
+        amp_in, phase_in = _iq_to_amp_phase(amam_ref_flat)
         amp_in_flat = amp_in.flatten()
         phase_in_flat = phase_in.flatten()
         max_in = np.max(amp_in_flat) + 1e-30
         idx = np.random.choice(len(amp_in_flat), min(len(amp_in_flat), 20000), replace=False)
-        for out_flat, lbl, clr in [(pa_flat, 'PA Only (w/o DPD)', C_GT),
-                                    (pred_flat, 'Cascaded (DPD+PA)', C_PRED)]:
-            _, phase_out = _iq_to_amp_phase(out_flat)
+        ampm_pairs = []
+        if amam_pa_flat is not None:
+            ampm_pairs.append((amam_pa_flat, 'PA Only (w/o DPD)', C_GT))
+        ampm_pairs.append((amam_cas_flat, 'Cascaded (DPD+PA)', C_PRED))
+        for out_flat_i, lbl, clr in ampm_pairs:
+            _, phase_out = _iq_to_amp_phase(out_flat_i)
             phase_diff = np.degrees(np.angle(np.exp(1j * (phase_out.flatten() - phase_in_flat))))
             ax.scatter(amp_in_flat[idx] / max_in, phase_diff[idx],
                        s=1, alpha=C_SCATTER_ALPHA, color=clr, label=lbl,
