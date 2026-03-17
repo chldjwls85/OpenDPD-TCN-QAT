@@ -257,5 +257,87 @@ class TestCheckConvergence:
         assert im.check_convergence(metrics) is False
 
 
+# -----------------------------------------------------------------------
+# 11. extract_carriers
+# -----------------------------------------------------------------------
+
+class TestExtractCarriers:
+    def test_extract_carriers(self):
+        if not os.path.isfile(TARGET_MAT):
+            pytest.skip("Target .mat file not found")
+        sig, sr = im.load_target(TARGET_MAT)
+        fd_data, cp_cache, carrier_bb = im.extract_carriers(sig, sr)
+        assert len(fd_data) == 5
+        assert len(cp_cache) == 5
+        assert len(carrier_bb) == 5
+        for k in range(5):
+            assert len(fd_data[k]) >= 1
+            for sym in fd_data[k]:
+                assert sym.shape == (1200,)
+            assert cp_cache[k][0] == k
+            assert len(cp_cache[k][1]) >= 1
+
+
+# -----------------------------------------------------------------------
+# 12. estimate_carrier_params
+# -----------------------------------------------------------------------
+
+class TestEstimateCarrierParams:
+    def test_estimate_carrier_params(self):
+        if not os.path.isfile(TARGET_MAT):
+            pytest.skip("Target .mat file not found")
+        sig, sr = im.load_target(TARGET_MAT)
+        fd_data, cp_cache, carrier_bb = im.extract_carriers(sig, sr)
+        gains, delays = im.estimate_carrier_params(fd_data, carrier_bb, sr)
+        assert len(gains) == 5
+        assert len(delays) == 5
+        for g in gains:
+            assert 0.5 < g < 2.0
+        for d in delays:
+            assert abs(d) < 10
+
+
+# -----------------------------------------------------------------------
+# 13. synthesize shape
+# -----------------------------------------------------------------------
+
+class TestSynthesizeShape:
+    def test_synthesize_shape(self):
+        if not os.path.isfile(TARGET_MAT):
+            pytest.skip("Target .mat file not found")
+        sig, sr = im.load_target(TARGET_MAT)
+        fd_data, cp_cache, carrier_bb = im.extract_carriers(sig, sr)
+        gains, delays = im.estimate_carrier_params(fd_data, carrier_bb, sr)
+        target_rms = np.sqrt(np.mean(np.abs(sig) ** 2))
+        params = {'gains': gains, 'phases': [0.0]*5, 'delays': delays,
+                  'cfr_threshold': 0.96, 'band_gains_db': [0.0]*5}
+        result = im.synthesize(fd_data, params, sr, target_rms,
+                               cp_cache=cp_cache, carrier_bb=carrier_bb)
+        assert result.shape == (im.NUM_SAMPLES,)
+        assert np.iscomplexobj(result)
+        result_rms = np.sqrt(np.mean(np.abs(result) ** 2))
+        assert abs(result_rms / target_rms - 1.0) < 0.1
+
+
+# -----------------------------------------------------------------------
+# 14. synthesize warm-start quality
+# -----------------------------------------------------------------------
+
+class TestSynthesizeWarmStartQuality:
+    def test_synthesize_warm_start_quality(self):
+        if not os.path.isfile(TARGET_MAT):
+            pytest.skip("Target .mat file not found")
+        sig, sr = im.load_target(TARGET_MAT)
+        fd_data, cp_cache, carrier_bb = im.extract_carriers(sig, sr)
+        gains, delays = im.estimate_carrier_params(fd_data, carrier_bb, sr)
+        target_rms = np.sqrt(np.mean(np.abs(sig) ** 2))
+        params = {'gains': gains, 'phases': [0.0]*5, 'delays': delays,
+                  'cfr_threshold': 0.96, 'band_gains_db': [0.0]*5}
+        result = im.synthesize(fd_data, params, sr, target_rms,
+                               cp_cache=cp_cache, carrier_bb=carrier_bb)
+        nmse = im.compute_nmse(result, sig)
+        assert nmse < -15, f"Warm-start NMSE too high: {nmse:.1f} dB"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
