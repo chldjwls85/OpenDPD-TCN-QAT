@@ -17,7 +17,9 @@ Plus helpers: compute_all_metrics(), check_convergence().
 
 import logging
 import os
+import time
 import numpy as np
+from scipy.optimize import differential_evolution
 
 from generate_signal import (
     load_mat,
@@ -627,3 +629,316 @@ def synthesize(fd_data, params, sr, target_rms, cp_cache=None,
         output *= target_rms / current_rms
 
     return output
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Parameter packing / unpacking
+# ---------------------------------------------------------------------------
+
+def pack_params(params):
+    """Pack params dict into 21-element vector."""
+    return np.array(
+        params['gains'] + params['phases'] + params['delays']
+        + [params['cfr_threshold']] + params['band_gains_db']
+    )
+
+
+def unpack_params(vec):
+    """Unpack 21-element vector into params dict."""
+    return {
+        'gains': list(vec[0:5]),
+        'phases': list(vec[5:10]),
+        'delays': list(vec[10:15]),
+        'cfr_threshold': float(vec[15]),
+        'band_gains_db': list(vec[16:21]),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Objective function factory
+# ---------------------------------------------------------------------------
+
+def make_objective(fd_data, target, sr, target_rms, cp_cache, carrier_bb):
+    """Create composite loss closure for differential_evolution.
+
+    Parameters
+    ----------
+    fd_data     : list of 5 lists of 1200-element complex arrays.
+    target      : 1-D complex target signal.
+    sr          : sample rate (Hz).
+    target_rms  : desired RMS of synthesized signal.
+    cp_cache    : cached CP positions from extract_carriers.
+    carrier_bb  : list of 5 baseband carrier signals.
+
+    Returns
+    -------
+    objective : callable(vec) -> float
+    """
+    def objective(vec):
+        try:
+            params = unpack_params(vec)
+            sig = synthesize(fd_data, params, sr, target_rms, cp_cache, carrier_bb)
+            nmse = compute_nmse(sig, target)
+            psd_mae = compute_psd_mae(sig, target, sr)
+            evm, _ = compute_evm_cached(sig, target, sr, cp_cache=cp_cache)
+            d_papr = abs(compute_papr(sig) - compute_papr(target))
+            ccdf_dev = compute_ccdf_dev(sig, target)
+            ch_err = compute_channel_power_error(sig, target, sr)
+
+            loss = (max(0, nmse - THRESHOLDS['nmse']) / 1.0) ** 2 \
+                 + (psd_mae / THRESHOLDS['psd_mae']) ** 2 \
+                 + (evm / THRESHOLDS['evm']) ** 2 \
+                 + (d_papr / THRESHOLDS['d_papr']) ** 2 \
+                 + (ccdf_dev / THRESHOLDS['ccdf_dev']) ** 2 \
+                 + (ch_err / THRESHOLDS['ch_err']) ** 2
+            return float(loss)
+        except Exception:
+            return 1e6
+
+    return objective
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Optimization loop
+# ---------------------------------------------------------------------------
+
+def optimize(fd_data, target, sr, target_rms, cp_cache, carrier_bb,
+             init_params, max_iter=300, verbose=True):
+    """Run differential evolution to refine carrier parameters.
+
+    Parameters
+    ----------
+    fd_data      : list of 5 lists of 1200-element complex arrays.
+    target       : 1-D complex target signal.
+    sr           : sample rate (Hz).
+    target_rms   : desired RMS.
+    cp_cache     : cached CP positions.
+    carrier_bb   : list of 5 baseband carrier signals.
+    init_params  : dict with keys gains, phases, delays, cfr_threshold,
+                   band_gains_db.
+    max_iter     : maximum number of generations.
+    verbose      : print per-generation status.
+
+    Returns
+    -------
+    best_params : dict  -- optimized parameter set.
+    history     : list of dicts -- per-generation metric snapshots.
+    """
+    init_vec = pack_params(init_params)
+    objective = make_objective(fd_data, target, sr, target_rms, cp_cache,
+                               carrier_bb)
+
+    # Bounds centred on warm-start
+    bounds = []
+    for i in range(5):
+        bounds.append((init_vec[i] * 0.8, init_vec[i] * 1.2))   # gains
+    for i in range(5):
+        bounds.append((-0.3, 0.3))                               # phases
+    for i in range(5):
+        bounds.append((init_vec[10 + i] - 2.0,
+                       init_vec[10 + i] + 2.0))                  # delays
+    bounds.append((0.85, 0.99))                                  # cfr_threshold
+    for i in range(5):
+        bounds.append((-1.0, 1.0))                               # band_gains_db
+
+    history = []
+
+    def callback(xk, convergence=None):
+        params = unpack_params(xk)
+        sig = synthesize(fd_data, params, sr, target_rms, cp_cache, carrier_bb)
+        metrics, _ = compute_all_metrics(sig, target, sr, cp_cache)
+        history.append(metrics)
+        if verbose:
+            print(f"  Gen {len(history):3d} | NMSE={metrics['nmse']:.1f} "
+                  f"PSD={metrics['psd_mae']:.3f} "
+                  f"EVM={metrics['evm']:.2f}% "
+                  f"dPAPR={metrics['d_papr']:.3f} "
+                  f"CCDF={metrics['ccdf_dev']:.4f} "
+                  f"ChErr={metrics['ch_err']:.3f}")
+        if check_convergence(metrics):
+            if verbose:
+                print("  === ALL THRESHOLDS MET ===")
+            return True
+        return False
+
+    result = differential_evolution(
+        objective, bounds=bounds, x0=init_vec,
+        strategy='best1bin', maxiter=max_iter, popsize=5,
+        tol=1e-8, seed=42, callback=callback, disp=False,
+        workers=1, updating='deferred',
+        polish=True,
+    )
+
+    return unpack_params(result.x), history
+
+
+# ---------------------------------------------------------------------------
+# Convergence plotting
+# ---------------------------------------------------------------------------
+
+def plot_convergence(history, save_path):
+    """Plot 6-panel convergence figure and save to *save_path*."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    metrics_config = [
+        ('nmse',     'NMSE (dB)',              THRESHOLDS['nmse']),
+        ('psd_mae',  'PSD MAE (dB)',           THRESHOLDS['psd_mae']),
+        ('evm',      'EVM (%)',                THRESHOLDS['evm']),
+        ('d_papr',   '|dPAPR| (dB)',           THRESHOLDS['d_papr']),
+        ('ccdf_dev', 'CCDF Deviation',         THRESHOLDS['ccdf_dev']),
+        ('ch_err',   'Max Ch Power Err (dB)',  THRESHOLDS['ch_err']),
+    ]
+
+    fig, axes = plt.subplots(3, 2, figsize=(12, 10))
+    fig.suptitle('Optimization Convergence', fontweight='bold')
+    gens = np.arange(1, len(history) + 1)
+
+    for idx, (key, label, threshold) in enumerate(metrics_config):
+        ax = axes[idx // 2, idx % 2]
+        vals = [h[key] for h in history]
+        ax.plot(gens, vals, 'b-', lw=1.5)
+        ax.axhline(threshold, color='r', ls='--', lw=1,
+                   label=f'Threshold: {threshold}')
+        ax.set_xlabel('Generation')
+        ax.set_ylabel(label)
+        ax.set_title(label, loc='left', fontweight='bold')
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.15, ls='--')
+
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=200, bbox_inches='tight')
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def iterative_match(target_path, max_iter=300, verbose=True):
+    """End-to-end iterative signal matching.
+
+    Parameters
+    ----------
+    target_path : str
+        Path to target .mat file.
+    max_iter : int
+        Maximum differential-evolution generations.
+    verbose : bool
+        Print progress.
+
+    Returns
+    -------
+    signal : complex ndarray (NUM_SAMPLES,)
+    report : dict with keys metrics, history, converged, elapsed_s, params.
+    """
+    t0 = time.time()
+
+    target, sr = load_target(target_path)
+    target_rms = float(np.sqrt(np.mean(np.abs(target) ** 2)))
+
+    # Phase 1
+    fd_data, cp_cache, carrier_bb = extract_carriers(target, sr)
+    gains, delays = estimate_carrier_params(fd_data, carrier_bb, sr)
+    init_params = {
+        'gains': gains,
+        'phases': [0.0] * 5,
+        'delays': delays,
+        'cfr_threshold': 0.96,
+        'band_gains_db': [0.0] * 5,
+    }
+
+    warm_sig = synthesize(fd_data, init_params, sr, target_rms,
+                          cp_cache, carrier_bb)
+    warm_metrics, cp_cache = compute_all_metrics(warm_sig, target, sr, cp_cache)
+
+    if verbose:
+        print("Warm-start metrics:")
+        for k, v in warm_metrics.items():
+            thr = THRESHOLDS[k]
+            print(f"  {k:10s} = {v:10.4f}  (threshold: {thr})"
+                  f"  [{'PASS' if v < thr else 'FAIL'}]")
+
+    if check_convergence(warm_metrics):
+        return warm_sig, {
+            'metrics': warm_metrics,
+            'history': [warm_metrics],
+            'converged': True,
+            'elapsed_s': time.time() - t0,
+            'params': init_params,
+        }
+
+    # Phase 2
+    best_params, history = optimize(
+        fd_data, target, sr, target_rms, cp_cache, carrier_bb,
+        init_params, max_iter=max_iter, verbose=verbose,
+    )
+
+    final_sig = synthesize(fd_data, best_params, sr, target_rms,
+                           cp_cache, carrier_bb)
+    final_metrics, _ = compute_all_metrics(final_sig, target, sr, cp_cache)
+    converged = check_convergence(final_metrics)
+    elapsed = time.time() - t0
+
+    if verbose:
+        print(f"\nFINAL RESULTS ({elapsed:.1f}s)")
+        for k, v in final_metrics.items():
+            thr = THRESHOLDS[k]
+            print(f"  {k:10s} = {v:10.4f}"
+                  f"  [{'PASS' if v < thr else 'FAIL'}]")
+
+    return final_sig, {
+        'metrics': final_metrics,
+        'history': history,
+        'converged': converged,
+        'elapsed_s': elapsed,
+        'params': best_params,
+    }
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def main():
+    """Command-line entry point for iterative signal matching."""
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Iterative signal matching")
+    ap.add_argument("--target", type=str, default=None)
+    ap.add_argument("--max_iter", type=int, default=300)
+    ap.add_argument("--output", type=str, default=None)
+    ap.add_argument("--plot", type=str, default=None)
+    ap.add_argument("--quiet", action="store_true")
+    args = ap.parse_args()
+
+    if args.target is None:
+        args.target = os.path.join(
+            os.path.dirname(__file__), '..',
+            'Precook_Signal_100WDevice_'
+            '[5cLTE20MHz_iBW100MHz_SR491p52MHz_200uS_TM3p1a_PAPR10p0_IQ].mat',
+        )
+
+    signal, report = iterative_match(
+        args.target, max_iter=args.max_iter, verbose=not args.quiet,
+    )
+
+    if args.output:
+        save_mat(signal, SR, args.output)
+
+    if args.plot and report['history']:
+        plot_convergence(report['history'], args.plot)
+
+    # Full comparison plot
+    out_dir = os.path.join(os.path.dirname(__file__), '..', 'plots')
+    os.makedirs(out_dir, exist_ok=True)
+    from plot_comparison import plot_comparison
+    target_sig, _ = load_target(args.target)
+    plot_comparison(signal, target_sig, SR,
+                    os.path.join(out_dir, 'iterative_match_comparison.png'),
+                    gen_ofdm_sig=signal)
+
+
+if __name__ == '__main__':
+    main()

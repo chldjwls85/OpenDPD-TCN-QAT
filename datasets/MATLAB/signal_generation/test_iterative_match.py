@@ -339,5 +339,77 @@ class TestSynthesizeWarmStartQuality:
         assert nmse < -15, f"Warm-start NMSE too high: {nmse:.1f} dB"
 
 
+# -----------------------------------------------------------------------
+# 15. pack_params / unpack_params round-trip
+# -----------------------------------------------------------------------
+
+class TestPackUnpack:
+    def test_pack_unpack_roundtrip(self):
+        params = {
+            'gains': [1.0, 0.95, 1.05, 0.98, 1.02],
+            'phases': [0.0, 0.1, -0.1, 0.05, -0.05],
+            'delays': [0.0, 0.5, -0.5, 0.2, -0.3],
+            'cfr_threshold': 0.96,
+            'band_gains_db': [0.0, 0.1, -0.1, 0.05, -0.05],
+        }
+        vec = im.pack_params(params)
+        assert vec.shape == (21,)
+        recovered = im.unpack_params(vec)
+        for key in params:
+            if isinstance(params[key], list):
+                np.testing.assert_allclose(recovered[key], params[key])
+            else:
+                assert abs(recovered[key] - params[key]) < 1e-10
+
+
+# -----------------------------------------------------------------------
+# 16. Composite loss returns float
+# -----------------------------------------------------------------------
+
+class TestCompositeLoss:
+    def test_composite_loss_returns_float(self):
+        if not os.path.isfile(TARGET_MAT):
+            pytest.skip("Target .mat file not found")
+        sig, sr = im.load_target(TARGET_MAT)
+        fd_data, cp_cache, carrier_bb = im.extract_carriers(sig, sr)
+        gains, delays = im.estimate_carrier_params(fd_data, carrier_bb, sr)
+        target_rms = np.sqrt(np.mean(np.abs(sig) ** 2))
+        params = {
+            'gains': gains,
+            'phases': [0.0] * 5,
+            'delays': delays,
+            'cfr_threshold': 0.96,
+            'band_gains_db': [0.0] * 5,
+        }
+        vec = im.pack_params(params)
+        objective = im.make_objective(fd_data, sig, sr, target_rms,
+                                      cp_cache, carrier_bb)
+        loss = objective(vec)
+        assert isinstance(loss, float)
+        assert not np.isnan(loss)
+        assert loss >= 0
+
+
+# -----------------------------------------------------------------------
+# 17. iterative_match public API
+# -----------------------------------------------------------------------
+
+class TestIterativeMatchAPI:
+    def test_iterative_match_api(self):
+        if not os.path.isfile(TARGET_MAT):
+            pytest.skip("Target .mat file not found")
+        signal, report = im.iterative_match(TARGET_MAT, max_iter=2,
+                                            verbose=False)
+        assert signal.shape == (98304,)
+        assert np.iscomplexobj(signal)
+        assert 'metrics' in report
+        assert 'history' in report
+        assert 'converged' in report
+        assert 'elapsed_s' in report
+        assert set(report['metrics'].keys()) == {
+            'nmse', 'psd_mae', 'evm', 'd_papr', 'ccdf_dev', 'ch_err',
+        }
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
