@@ -111,21 +111,21 @@ Both traditional models use the Indirect Learning Architecture (ILA): build basi
 
 ### 7.1 APA_200MHz (3.5 GHz GaN Doherty PA, 5-carrier LTE, 200 MHz BW, 256-QAM)
 
-| Rank | Model | Parameters | Method | ACLR_AVG (dB) | EVM (dB) | NMSE (dB) |
-|------|-------|-----------|--------|---------------|----------|-----------|
-| 1 | **TRes-DeltaGRU** | 524 | SGD 300ep | **-53.35** | **-49.08** | -48.36 |
-| 2 | GRU | 519 | SGD 300ep | -52.61 | -47.50 | -46.84 |
-| 3 | MP | 500 | QR | -41.01 | -32.68 | -31.77 |
-| 4 | GMP | 510 | QR | -38.80 | -38.53 | -30.57 |
+| Rank | Model | Parameters | Method | ACLR_AVG (dB) | EVM (dB) |
+|------|-------|-----------|--------|---------------|----------|
+| 1 | **TRes-DeltaGRU** | 524 | SGD 300ep | **-53.35** | **-49.08** |
+| 2 | GRU | 519 | SGD 300ep | -52.61 | -47.50 |
+| 3 | MP | 500 | QR | -41.01 | -32.68 |
+| 4 | GMP | 510 | QR | -38.80 | -38.53 |
 
 ### 7.2 DPA_160MHz (2.4 GHz CMOS Digital PA, 4-carrier, 160 MHz BW, 1024-QAM)
 
-| Rank | Model | Parameters | Method | ACLR_AVG (dB) | EVM (dB) | NMSE (dB) |
-|------|-------|-----------|--------|---------------|----------|-----------|
-| 1 | **TRes-DeltaGRU** | 524 | SGD 300ep | **-56.81** | **-54.00** | -49.74 |
-| 2 | GMP | 510 | QR | -54.02 | -51.08 | -45.92 |
-| 3 | GRU | 519 | SGD 300ep | -51.93 | -49.97 | -44.83 |
-| 4 | MP | 500 | QR | -51.29 | -50.26 | -45.29 |
+| Rank | Model | Parameters | Method | ACLR_AVG (dB) | EVM (dB) |
+|------|-------|-----------|--------|---------------|----------|
+| 1 | **TRes-DeltaGRU** | 524 | SGD 300ep | **-56.81** | **-54.00** |
+| 2 | GMP | 510 | QR | -54.02 | -51.08 |
+| 3 | GRU | 519 | SGD 300ep | -51.93 | -49.97 |
+| 4 | MP | 500 | QR | -51.29 | -50.26 |
 
 ## 8. Analysis
 
