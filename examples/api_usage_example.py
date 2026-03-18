@@ -44,7 +44,7 @@ print("=" * 80)
 
 dpd_results = opendpd.train_dpd(
     dataset_name='DPA_200MHz',
-    DPD_backbone='deltagru_tcnskip',
+    DPD_backbone='tres_deltagru',
     DPD_hidden_size=15,
     PA_backbone='gru',  # Must match the PA model trained above
     PA_hidden_size=23,  # Must match the PA model trained above
@@ -69,7 +69,7 @@ print("=" * 80)
 
 run_results = opendpd.run_dpd(
     dataset_name='DPA_200MHz',
-    DPD_backbone='deltagru_tcnskip',
+    DPD_backbone='tres_deltagru',
     DPD_hidden_size=15,
     accelerator='cpu'
 )
@@ -96,7 +96,7 @@ trainer.train_pa(PA_backbone='gru', PA_hidden_size=23)
 
 # Train DPD
 print("\n→ Training DPD model...")
-trainer.train_dpd(DPD_backbone='deltagru_tcnskip', DPD_hidden_size=15)
+trainer.train_dpd(DPD_backbone='tres_deltagru', DPD_hidden_size=15)
 
 # Run DPD
 print("\n→ Running DPD...")

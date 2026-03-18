@@ -115,7 +115,7 @@ def train_pa(
 def train_dpd(
     dataset_name: Optional[str] = None,
     dataset_path: Optional[str] = None,
-    DPD_backbone: str = 'deltagru_tcnskip',
+    DPD_backbone: str = 'tres_deltagru',
     DPD_hidden_size: int = 15,
     PA_backbone: str = 'gru',
     PA_hidden_size: int = 23,
@@ -210,7 +210,7 @@ def train_dpd(
 def run_dpd(
     dataset_name: Optional[str] = None,
     dataset_path: Optional[str] = None,
-    DPD_backbone: str = 'deltagru_tcnskip',
+    DPD_backbone: str = 'tres_deltagru',
     DPD_hidden_size: int = 15,
     accelerator: str = 'cpu',
     plot: bool = False,
@@ -275,7 +275,7 @@ def plot_dpd(
     dataset_name: Optional[str] = None,
     PA_backbone: str = 'gru',
     PA_hidden_size: int = 23,
-    DPD_backbone: str = 'deltagru_tcnskip',
+    DPD_backbone: str = 'tres_deltagru',
     DPD_hidden_size: int = 15,
     accelerator: str = 'cpu',
     **kwargs

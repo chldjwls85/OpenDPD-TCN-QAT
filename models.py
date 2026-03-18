@@ -118,9 +118,9 @@ class CoreModel(nn.Module):
                                    output_size=self.output_size,
                                    num_dvr_units=self.num_dvr_units,
                                    bias=self.bias)
-        elif backbone_type == 'deltagru_tcnskip':
-            from backbones.deltagru_tcnskip import DeltaGRU
-            self.backbone = DeltaGRU(input_size=6,
+        elif backbone_type == 'tres_deltagru':
+            from backbones.tres_deltagru import TResDeltaGRU
+            self.backbone = TResDeltaGRU(input_size=6,
                                              hidden_size=self.hidden_size,
                                              output_size=self.output_size,
                                              num_layers=self.num_layers,

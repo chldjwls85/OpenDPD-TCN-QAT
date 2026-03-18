@@ -41,7 +41,8 @@ def get_arguments():
     parser.add_argument('--patience', default=10, type=float, help='Learning rate')
     parser.add_argument('--grad_clip_val', default=200, type=float, help='Gradient clipping.')
     # GMP Hyperparameters
-    parser.add_argument('--K', default=4, type=int, help='Degree of GMP model')
+    parser.add_argument('--K', default=5, type=int, help='Degree of GMP model')
+    parser.add_argument('--gmp_memory_length', default=11, type=int, help='Memory length of GMP model')
     # Power Amplifier Model Settings
     parser.add_argument('--PA_backbone', default='gru',
                         choices=['gmp','deltagru', 'deltajanet', 'janet', 'fcn', 'gru', 'dgru', 'qgru', 'qgru_amp1', 'lstm', 'vdlstm',
@@ -55,7 +56,7 @@ def get_arguments():
     # Digital Predistortion Model Settings
     parser.add_argument('--DPD_backbone', default='gru',
                         choices=['gmp', 'deltagru', 'deltajanet', 'janet', 'snn', 'fcn', 'gru', 'dgru', 'qgru', 'qgru_amp1', 'lstm', 'vdlstm',
-                                'rvtdcnn', 'deltagru_tcnskip', 'tcn', 'pntdnn', 'pdgru', 'pgjanet', 'dvrjanet', 'bojanet', 'pnjanet', 'djanet',
+                                'rvtdcnn', 'tres_deltagru', 'tcn', 'pntdnn', 'pdgru', 'pgjanet', 'dvrjanet', 'bojanet', 'pnjanet', 'djanet',
                                 'tcnn', 'neuraltx', 'mcldnn'],
                         help='DPD model Recurrent layer type')
     parser.add_argument('--DPD_hidden_size', default=15, type=int, help='Hidden size of DPD backbone.')

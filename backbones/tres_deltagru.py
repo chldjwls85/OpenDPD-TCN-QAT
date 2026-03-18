@@ -8,10 +8,10 @@ import os
 from quant.modules.ops import Add, Mul
 from torch import nn
 
-class DeltaGRU(nn.Module):
+class TResDeltaGRU(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, num_layers, thx=0, thh=0,
                  bias=True):
-        super(DeltaGRU, self).__init__()
+        super(TResDeltaGRU, self).__init__()
         self.hidden_size = hidden_size
         self.input_size = 6
         self.output_size = output_size
