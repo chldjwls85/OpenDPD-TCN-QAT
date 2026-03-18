@@ -109,7 +109,7 @@ Both traditional models use the Indirect Learning Architecture (ILA): build basi
 
 ## 7. Results
 
-### 7.1 APA_200MHz (Auxiliary PA, 5-carrier LTE, 200 MHz BW, 256-QAM)
+### 7.1 APA_200MHz (3.5 GHz GaN Doherty PA, 5-carrier LTE, 200 MHz BW, 256-QAM)
 
 | Rank | Model | Parameters | Method | ACLR_AVG (dB) | EVM (dB) | NMSE (dB) |
 |------|-------|-----------|--------|---------------|----------|-----------|
@@ -118,7 +118,7 @@ Both traditional models use the Indirect Learning Architecture (ILA): build basi
 | 3 | MP | 500 | QR | -41.01 | -32.68 | -31.77 |
 | 4 | GMP | 510 | QR | -38.80 | -38.53 | -30.57 |
 
-### 7.2 DPA_160MHz (Doherty PA, 4-carrier, 160 MHz BW, 1024-QAM)
+### 7.2 DPA_160MHz (2.4 GHz CMOS Digital PA, 4-carrier, 160 MHz BW, 1024-QAM)
 
 | Rank | Model | Parameters | Method | ACLR_AVG (dB) | EVM (dB) | NMSE (dB) |
 |------|-------|-----------|--------|---------------|----------|-----------|
