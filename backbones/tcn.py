@@ -2,9 +2,9 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 
-class TCNN(nn.Module):
+class TCN(nn.Module):
     def __init__(self, hidden_channels):
-        super(TCNN, self).__init__()
+        super(TCN, self).__init__()
         self.in_channels = 6
         self.hidden_channels = hidden_channels
         self.out_channels = 2
@@ -32,7 +32,7 @@ class TCNN(nn.Module):
     
     def count_flops(self, input_shape):
         """
-        Calculate FLOPs for TCNN model per timestep.
+        Calculate FLOPs for TCN model per timestep.
         
         Args:
             input_shape (tuple): Input tensor shape (batch_size, seq_len, 2)

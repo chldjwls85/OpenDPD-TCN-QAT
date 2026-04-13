@@ -127,9 +127,9 @@ class CoreModel(nn.Module):
                                              thx=self.thx,
                                              thh=self.thh,
                                              bias=self.bias)
-        elif backbone_type == 'tcnn':
-            from backbones.tcnn import TCNN
-            self.backbone = TCNN(hidden_channels=self.hidden_size)
+        elif backbone_type == 'tcn':
+            from backbones.tcn import TCN
+            self.backbone = TCN(hidden_channels=self.hidden_size)
         elif backbone_type == 'neuraltx':
             from backbones.neuraltx import NeuralTX
             self.backbone = NeuralTX(hidden_channels=self.hidden_size)
