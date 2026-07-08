@@ -3,9 +3,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from .modules import Add, Mul, Pow, Sqrt
 from .quant_envs import AttrDict, Base_GRUQuantEnv
 
-__all__ = ["get_quant_model", "AttrDict", "Base_GRUQuantEnv"]
+__all__ = ["get_quant_model", "AttrDict", "Base_GRUQuantEnv", "Add", "Mul", "Pow", "Sqrt"]
 
 
 def _build_quant_args(proj: Any) -> AttrDict:

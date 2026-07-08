@@ -110,8 +110,7 @@ class CoreModel(nn.Module):
             from backbones.pgjanet import PGJANET
             self.backbone = PGJANET(hidden_size=self.hidden_size,
                                   output_size=self.output_size,
-                                  bias=self.bias,
-                                  window_size=self.window_size)
+                                  bias=self.bias)
         elif backbone_type == 'dvrjanet':
             from backbones.dvrjanet import DVRJANET
             self.backbone = DVRJANET(hidden_size=self.hidden_size,

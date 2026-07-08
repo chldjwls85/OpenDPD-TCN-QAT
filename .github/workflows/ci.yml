@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Cancel superseded runs on PR updates, but let pushes to main finish so
+  # the README badge always reflects a completed run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: Lint (critical errors)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install flake8
+        run: pip install flake8
+
+      # Fail the build on syntax errors, undefined names, and other
+      # bugs that would crash at runtime (E9, F63, F7, F82).
+      - name: Check for critical errors
+        run: >
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          --exclude=.git,__pycache__,Matlab,datasets/MATLAB,papers,pics,build,dist
+
+      # Full style report is informational only (does not fail the build).
+      - name: Full style report (informational)
+        run: >
+          flake8 . --count --exit-zero --max-line-length=127 --statistics
+          --exclude=.git,__pycache__,Matlab,datasets/MATLAB,papers,pics,build,dist
+
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    env:
+      MPLBACKEND: Agg
+      TQDM_DISABLE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install PyTorch (CPU)
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install OpenDPD
+        run: pip install -e ".[dev]"
+
+      - name: Run unit and smoke tests
+        run: pytest tests/ -v -m "not extended" --durations=10

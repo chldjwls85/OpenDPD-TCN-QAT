@@ -7,7 +7,7 @@ name = "opendpd"
 version = "2.0.0"
 description = "An end-to-end learning framework for modeling power amplifiers and digital pre-distortion"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "Chang Gao", email = "chang.gao@tudelft.nl"},
@@ -22,8 +22,6 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -49,10 +47,13 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/OpenDPD"
-Documentation = "https://github.com/yourusername/OpenDPD/blob/main/README.md"
-Repository = "https://github.com/yourusername/OpenDPD"
-Issues = "https://github.com/yourusername/OpenDPD/issues"
+Homepage = "https://github.com/lab-emi/OpenDPD"
+Documentation = "https://github.com/lab-emi/OpenDPD/blob/main/README.md"
+Repository = "https://github.com/lab-emi/OpenDPD"
+Issues = "https://github.com/lab-emi/OpenDPD/issues"
+
+[project.scripts]
+opendpd-cli = "opendpd.cli:main"
 
 [tool.setuptools]
 py-modules = ["arguments", "project", "models", "main"]
@@ -77,4 +78,10 @@ include = [
 
 [tool.setuptools.package-data]
 datasets = ["*/spec.json", "*/*.csv"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "extended: long-running tests executed only by the scheduled Weekly workflow",
+]
 

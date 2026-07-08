@@ -1,6 +1,10 @@
 ![OpenDPD](pics/OpenDPDlogo_new.png)
 
-
+[![CI](https://github.com/lab-emi/OpenDPD/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/lab-emi/OpenDPD/actions/workflows/ci.yml)
+[![Weekly](https://github.com/lab-emi/OpenDPD/actions/workflows/weekly.yml/badge.svg?branch=main)](https://github.com/lab-emi/OpenDPD/actions/workflows/weekly.yml)
+[![PyPI](https://img.shields.io/pypi/v/opendpd)](https://pypi.org/project/opendpd/)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://github.com/lab-emi/OpenDPD/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 
 **OpenDPD** is an end-to-end learning framework built in PyTorch for modeling power amplifiers (PA) and digital pre-distortion. Developed by the [Lab of Efficient Machine Intelligence](https://www.tudemi.com) @ Delft University of Technology, OpenDPD now ships as both a pip-installable package and a full research codebase.
 - `pip install opendpd` exposes high-level Python APIs (`train_pa`, `train_dpd`, `create_dataset`, etc.) and an `opendpd-cli` entry point for quick experiments.
@@ -98,6 +102,7 @@ Watch our [Demo Video](https://youtu.be/n3765lm3QZI) to see a real OpenDPDv2-tra
 ├── opendpd/         # Python package exposing the high-level API
 ├── quant/           # Quantization-aware training components
 ├── steps/           # CLI entry points (train_pa, train_dpd, run_dpd)
+├── tests/           # Pytest suite (unit + end-to-end smoke tests, run in CI)
 ├── utils/           # Miscellaneous helper functions
 ├── Makefile         # Convenience targets (install, clean, etc.)
 ├── main.py          # Legacy CLI entry mirrored by opendpd-cli
@@ -231,6 +236,17 @@ bash bash_scripts/quant_mp_dpd.sh
 To reproduce the quantized (W16A16) TRes-DeltaGRU-450 DPD modeling results shown in **OpenDPDv2** Table 1:
 ```bash
 bash bash_scripts/OpenDPDv2.sh
+```
+
+# Testing & Continuous Integration
+
+Every push and pull request to `main` is automatically tested by GitHub Actions ([CI workflow](.github/workflows/ci.yml)): a lint pass for critical errors plus the pytest suite on Python 3.10–3.13, covering unit tests (metrics, backbones, datasets, API) and a full CPU end-to-end smoke run of `train_pa → train_dpd → run_dpd → plot` (including W16A16 quantization-aware training). A scheduled [Weekly workflow](.github/workflows/weekly.yml) additionally trains every supported backbone and every built-in dataset on Linux and macOS. The badges at the top of this page reflect the latest results.
+
+To run the tests locally:
+```bash
+pip install -e ".[dev]"
+pytest -m "not extended"   # fast suite (~1 min on CPU)
+pytest                     # everything, incl. all backbones / all datasets
 ```
 
 # Experimental Setup
