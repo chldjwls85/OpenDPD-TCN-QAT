@@ -25,7 +25,7 @@ def test_api_functions():
     print("\nTest 2: Checking API functions...")
     try:
         import opendpd
-        functions = ['train_pa', 'train_dpd', 'run_dpd', 'load_dataset', 'create_dataset', 'OpenDPDTrainer']
+        functions = ['train_pa', 'train_dpd', 'run_dpd', 'plot_dpd', 'load_dataset', 'create_dataset', 'OpenDPDTrainer']
         missing = []
         for func in functions:
             if not hasattr(opendpd, func):

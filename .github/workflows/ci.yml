@@ -72,3 +72,37 @@ jobs:
 
       - name: Run unit and smoke tests
         run: pytest tests/ -v -m "not extended" --durations=10
+
+  build:
+    name: Build & check distribution
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: pip install build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      # Validates long_description rendering and distribution metadata the
+      # same way PyPI does on upload — a broken pyproject fails here, not
+      # after a release tag has already been pushed.
+      - name: Validate distribution metadata
+        run: twine check dist/*
+
+      # Guard against pyproject `version` and opendpd.__version__ drifting
+      # apart — the publish workflow trusts the tag against __version__.
+      - name: Check version consistency
+        run: |
+          set -euo pipefail
+          pkg_version="$(python -c "import re, pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('opendpd/__init__.py').read_text()).group(1))")"
+          wheel_version="$(ls dist/*.whl | sed -E 's|.*/opendpd-([^-]+)-.*|\1|')"
+          echo "opendpd.__version__ = ${pkg_version}"
+          echo "built wheel version = ${wheel_version}"
+          test "${pkg_version}" = "${wheel_version}"
