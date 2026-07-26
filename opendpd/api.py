@@ -25,14 +25,29 @@ from steps import plot as plot_module
 from arguments import get_arguments
 
 
+def _append_cli_kwargs(kwargs: Dict[str, Any]) -> None:
+    """Append keyword options while respecting argparse boolean flags."""
+
+    boolean_flags = {
+        'use_segments', 'quant', 'collect_delta_stats',
+        'cuda_graph_training', 'plot',
+    }
+    for key, value in kwargs.items():
+        if isinstance(value, bool) and key in boolean_flags:
+            if value:
+                sys.argv.append(f'--{key}')
+        elif value is not None:
+            sys.argv.extend([f'--{key}', str(value)])
+
+
 def train_pa(
     dataset_name: Optional[str] = None,
     dataset_path: Optional[str] = None,
     PA_backbone: str = 'gru',
     PA_hidden_size: int = 23,
-    n_epochs: int = 100,
-    batch_size: int = 256,
-    lr: float = 5e-4,
+    n_epochs: int = 300,
+    batch_size: int = 64,
+    lr: float = 5e-3,
     accelerator: str = 'cpu',
     frame_length: int = 200,
     seed: int = 0,
@@ -98,8 +113,7 @@ def train_pa(
     sys.argv.extend(['--plot_every', str(plot_every)])
 
     # Add any additional keyword arguments
-    for key, value in kwargs.items():
-        sys.argv.extend([f'--{key}', str(value)])
+    _append_cli_kwargs(kwargs)
 
     # Create project and run training
     proj = Project()
@@ -119,9 +133,9 @@ def train_dpd(
     DPD_hidden_size: int = 15,
     PA_backbone: str = 'gru',
     PA_hidden_size: int = 23,
-    n_epochs: int = 100,
-    batch_size: int = 256,
-    lr: float = 5e-4,
+    n_epochs: int = 300,
+    batch_size: int = 64,
+    lr: float = 5e-3,
     accelerator: str = 'cpu',
     frame_length: int = 200,
     seed: int = 0,
@@ -129,6 +143,8 @@ def train_dpd(
     thh: float = 0.0,
     plot: bool = False,
     plot_every: int = 1,
+    collect_delta_stats: bool = False,
+    cuda_graph_training: bool = False,
     **kwargs
 ) -> Dict[str, Any]:
     """
@@ -151,6 +167,8 @@ def train_dpd(
         thh: Threshold for hidden state deltas (for delta-based models)
         plot: Enable plot generation during training
         plot_every: Generate per-epoch plots every N epochs
+        collect_delta_stats: Collect temporal sparsity diagnostics during training
+        cuda_graph_training: Opt in to guarded CUDA-graph DPD training
         **kwargs: Additional arguments passed to the training configuration
 
     Returns:
@@ -188,13 +206,16 @@ def train_dpd(
     sys.argv.extend(['--seed', str(seed)])
     sys.argv.extend(['--thx', str(thx)])
     sys.argv.extend(['--thh', str(thh)])
+    if collect_delta_stats:
+        sys.argv.append('--collect_delta_stats')
+    if cuda_graph_training:
+        sys.argv.append('--cuda_graph_training')
     if plot:
         sys.argv.append('--plot')
     sys.argv.extend(['--plot_every', str(plot_every)])
 
     # Add any additional keyword arguments
-    for key, value in kwargs.items():
-        sys.argv.extend([f'--{key}', str(value)])
+    _append_cli_kwargs(kwargs)
 
     # Create project and run training
     proj = Project()
@@ -258,8 +279,7 @@ def run_dpd(
         sys.argv.append('--plot')
 
     # Add any additional keyword arguments
-    for key, value in kwargs.items():
-        sys.argv.extend([f'--{key}', str(value)])
+    _append_cli_kwargs(kwargs)
 
     # Create project and run DPD
     proj = Project()
@@ -318,8 +338,7 @@ def plot_dpd(
     sys.argv.extend(['--DPD_hidden_size', str(DPD_hidden_size)])
     sys.argv.extend(['--accelerator', accelerator])
 
-    for key, value in kwargs.items():
-        sys.argv.extend([f'--{key}', str(value)])
+    _append_cli_kwargs(kwargs)
 
     proj = Project()
     plot_module.main(proj)
@@ -571,4 +590,3 @@ class OpenDPDTrainer:
             config['dataset_path'] = self.dataset_path
         
         return run_dpd(**config)
-

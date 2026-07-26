@@ -1,10 +1,12 @@
 """Tests for the public opendpd Python API (opendpd/api.py)."""
 
+import inspect
 import sys
 
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
 import opendpd
 from conftest import REPO_ROOT, SMOKE_DATASET
@@ -84,6 +86,92 @@ class TestCreateDataset:
 
 
 class TestApiTraining:
+    @pytest.mark.parametrize("function_name", ["train_pa", "train_dpd"])
+    def test_benchmark_recipe_defaults_are_public_api_defaults(self, function_name):
+        signature = inspect.signature(getattr(opendpd, function_name))
+
+        assert signature.parameters["n_epochs"].default == 300
+        assert signature.parameters["batch_size"].default == 64
+        assert signature.parameters["lr"].default == 5e-3
+
+    def test_adamw_and_scheduler_recipe_is_explicit(self, monkeypatch):
+        import project as project_module
+
+        calls = {}
+        optimizer_sentinel = object()
+        scheduler_sentinel = object()
+
+        def capture_adamw(params, **kwargs):
+            calls["optimizer_params"] = tuple(params)
+            calls["optimizer_kwargs"] = kwargs
+            return optimizer_sentinel
+
+        def capture_scheduler(**kwargs):
+            calls["scheduler_kwargs"] = kwargs
+            return scheduler_sentinel
+
+        monkeypatch.setattr(project_module.optim, "AdamW", capture_adamw)
+        monkeypatch.setattr(
+            project_module.optim.lr_scheduler,
+            "ReduceLROnPlateau",
+            capture_scheduler,
+        )
+
+        project = project_module.Project.__new__(project_module.Project)
+        project.opt_type = "adamw"
+        project.lr = 5e-3
+        project.decay_factor = 0.5
+        project.patience = 5
+        project.lr_end = 5e-5
+        net = torch.nn.Linear(2, 2)
+
+        optimizer, scheduler = project.build_optimizer(net)
+
+        assert optimizer is optimizer_sentinel
+        assert scheduler is scheduler_sentinel
+        assert calls["optimizer_params"] == tuple(net.parameters())
+        assert calls["optimizer_kwargs"] == {
+            "lr": 5e-3,
+            "weight_decay": 0.01,
+            "betas": (0.9, 0.999),
+            "eps": 1e-8,
+        }
+        assert calls["scheduler_kwargs"] == {
+            "optimizer": optimizer_sentinel,
+            "mode": "min",
+            "factor": 0.5,
+            "patience": 5,
+            "threshold": 1e-4,
+            "threshold_mode": "rel",
+            "cooldown": 0,
+            "min_lr": 5e-5,
+            "eps": 1e-8,
+        }
+
+    def test_cuda_graph_training_flag_is_explicit_opt_in(self, preserved_argv):
+        from arguments import get_arguments
+
+        sys.argv = ['opendpd']
+        assert get_arguments().cuda_graph_training is False
+        sys.argv = ['opendpd', '--cuda_graph_training']
+        assert get_arguments().cuda_graph_training is True
+
+    def test_boolean_kwargs_are_emitted_as_flags(self, preserved_argv):
+        from opendpd import api
+
+        sys.argv = ['opendpd']
+        api._append_cli_kwargs({
+            "collect_delta_stats": True,
+            "cuda_graph_training": True,
+            "plot": False,
+            "frame_stride": 16,
+            "unused": None,
+        })
+        assert sys.argv == [
+            'opendpd', '--collect_delta_stats', '--cuda_graph_training',
+            '--frame_stride', '16'
+        ]
+
     def test_train_pa_smoke(self, tmp_path, monkeypatch, preserved_argv):
         from pathlib import Path
 
