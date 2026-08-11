@@ -141,10 +141,10 @@ protocol을 자동으로 검증하지는 않는다. Data나 protocol을 바꾸�
 
 ## 문서
 
-- [TCN-QAT 구조와 export 경계](docs/TCN_QAT_ARCHITECTURE_KO.md)
+- [TCN-QAT 구조와 export 경계](TCN_QAT_ARCHITECTURE_KO.md)
 - [TCN-Compiler 수치 계약](https://github.com/chldjwls85/DPD-Flow/blob/main/docs/NUMERIC_CONTRACT_KO.md)
 - [Flow 검증 정책](https://github.com/chldjwls85/DPD-Flow/blob/main/flow/docs/VALIDATION_KO.md)
-- [Upstream provenance와 라이선스](docs/UPSTREAM_AND_LICENSE_KO.md)
+- [Upstream provenance와 라이선스](UPSTREAM_AND_LICENSE_KO.md)
 
 `examples/api_usage_example.py`는 여러 모델을 학습하고 custom dataset을 생성하는
 state-changing generic upstream API demo다. Canonical FExLite TCN QAT 또는 DPD-Flow
@@ -155,4 +155,4 @@ workflow가 아니다.
 이 frontend는 [lab-emi/OpenDPD](https://github.com/lab-emi/OpenDPD)에서 파생한
 수정 저작물이다. Upstream 저자 표시와 Apache License 2.0 전문을 보존하며, 논문
 citation은 고정한 upstream README에서 확인할 수 있다. 정확한 원본 commit과 포크 변경 목록은
-[provenance 문서](docs/UPSTREAM_AND_LICENSE_KO.md)에 기록한다.
+[provenance 문서](UPSTREAM_AND_LICENSE_KO.md)에 기록한다.

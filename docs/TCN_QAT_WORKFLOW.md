@@ -148,10 +148,10 @@ the [dataset contract](../datasets/README_TCN_QAT.md) before changing data or pr
 
 ## Documentation
 
-- [TCN-QAT architecture and export boundary](docs/TCN_QAT_ARCHITECTURE.md)
+- [TCN-QAT architecture and export boundary](TCN_QAT_ARCHITECTURE.md)
 - [TCN-Compiler numeric contract](https://github.com/chldjwls85/DPD-Flow/blob/main/docs/NUMERIC_CONTRACT.md)
 - [Flow validation policy](https://github.com/chldjwls85/DPD-Flow/blob/main/flow/docs/VALIDATION.md)
-- [Upstream provenance and license](docs/UPSTREAM_AND_LICENSE.md)
+- [Upstream provenance and license](UPSTREAM_AND_LICENSE.md)
 
 `examples/api_usage_example.py` is a generic, state-changing upstream API demo:
 it trains several models and creates a custom dataset. It is not the canonical
@@ -164,4 +164,4 @@ This frontend is a modified work derived from
 and the Apache License 2.0 text are preserved; the publication citations remain
 available in the pinned upstream README. The exact source commit and the
 fork-specific change list are recorded in the
-[provenance note](docs/UPSTREAM_AND_LICENSE.md).
+[provenance note](UPSTREAM_AND_LICENSE.md).
