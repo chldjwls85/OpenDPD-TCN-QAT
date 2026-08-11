@@ -9,8 +9,7 @@ recursive-include opendpd/datasets *.json *.csv
 recursive-include datasets *.json *.csv *.py
 recursive-include backbones *
 
-# Include backbone configurations
-recursive-include opendpd/backbones *.json
+# Include automation scripts
 recursive-include bash_scripts *.sh
 
 # Exclude unnecessary files

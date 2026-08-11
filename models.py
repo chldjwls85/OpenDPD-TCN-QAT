@@ -111,8 +111,7 @@ class CoreModel(nn.Module):
             from backbones.pgjanet import PGJANET
             self.backbone = PGJANET(hidden_size=self.hidden_size,
                                   output_size=self.output_size,
-                                  bias=self.bias,
-                                  window_size=self.window_size)
+                                  bias=self.bias)
         elif backbone_type == 'dvrjanet':
             from backbones.dvrjanet import DVRJANET
             self.backbone = DVRJANET(hidden_size=self.hidden_size,
@@ -128,6 +127,13 @@ class CoreModel(nn.Module):
                                              thx=self.thx,
                                              thh=self.thh,
                                              bias=self.bias)
+        elif backbone_type == 'tres_gru':
+            from backbones.tres_gru import TResGRU
+            self.backbone = TResGRU(input_size=6,
+                                    hidden_size=self.hidden_size,
+                                    output_size=self.output_size,
+                                    num_layers=self.num_layers,
+                                    bias=self.bias)
         elif backbone_type == 'tcn':
             from backbones.tcn import TCN
             self.backbone = TCN(hidden_channels=self.hidden_size)
@@ -157,11 +163,14 @@ class CoreModel(nn.Module):
             pass
 
     def forward(self, x, h_0=None):
-        device = x.device
         batch_size = x.size(0)  # NOTE: dim of x must be (batch, time, feat)/(N, T, F)
 
-        if h_0 is None:  # Create initial hidden states if necessary
-            h_0 = torch.zeros(self.num_layers, batch_size, self.hidden_size).to(device)
+        if h_0 is None and self.backbone_type != 'tres_deltagru':
+            # Create directly on the input device.  TRes-DeltaGRU owns five
+            # recurrent states internally and historically discarded this one.
+            h_0 = torch.zeros(
+                self.num_layers, batch_size, self.hidden_size, device=x.device
+            )
 
         # Forward Propagate through the RNN
         out = self.backbone(x, h_0)

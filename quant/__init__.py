@@ -4,9 +4,11 @@ from __future__ import annotations
 from typing import Any
 
 from .quant_envs import AttrDict, Base_GRUQuantEnv, FExLiteTCNQuantEnv
+from .modules import Add, Mul, Pow, Sqrt
 
 __all__ = [
-    "get_quant_model", "AttrDict", "Base_GRUQuantEnv", "FExLiteTCNQuantEnv"
+    "get_quant_model", "AttrDict", "Base_GRUQuantEnv", "FExLiteTCNQuantEnv",
+    "Add", "Mul", "Pow", "Sqrt",
 ]
 
 # Modified in the OpenDPD-TCN-QAT fork to dispatch native TCN QAT.

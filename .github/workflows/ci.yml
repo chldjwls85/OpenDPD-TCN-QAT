@@ -1,30 +1,108 @@
-name: OpenDPD-TCN-QAT CI
+name: CI
 
 on:
   push:
+    branches: [main, tcn-qat, "research/**"]
   pull_request:
+    branches: [main, tcn-qat]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Cancel superseded runs on PR updates, but let pushes to main finish so
+  # the README badge always reflects a completed run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  frontend-contract:
+  lint:
+    name: Lint (critical errors)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.12"
+
+      - name: Install flake8
+        run: pip install flake8
+
+      # Fail the build on syntax errors, undefined names, and other
+      # bugs that would crash at runtime (E9, F63, F7, F82).
+      - name: Check for critical errors
+        run: >
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          --exclude=.git,__pycache__,Matlab,datasets/MATLAB,papers,pics,build,dist
+
+      # Full style report is informational only (does not fail the build).
+      - name: Full style report (informational)
+        run: >
+          flake8 . --count --exit-zero --max-line-length=127 --statistics
+          --exclude=.git,__pycache__,Matlab,datasets/MATLAB,papers,pics,build,dist
+
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    env:
+      MPLBACKEND: Agg
+      TQDM_DISABLE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
           cache: pip
-      - name: Install package
-        run: python3 -m pip install --upgrade pip && python3 -m pip install .
-      - name: Run frontend contracts
+          cache-dependency-path: pyproject.toml
+
+      - name: Install PyTorch (CPU)
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install OpenDPD
+        run: pip install -e ".[dev]"
+
+      - name: Run unit and smoke tests
+        run: pytest tests/ -v -m "not extended" --durations=10
+
+  build:
+    name: Build & check distribution
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: pip install build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      # Validates long_description rendering and distribution metadata the
+      # same way PyPI does on upload — a broken pyproject fails here, not
+      # after a release tag has already been pushed.
+      - name: Validate distribution metadata
+        run: twine check dist/*
+
+      # Guard against pyproject `version` and opendpd.__version__ drifting
+      # apart — the publish workflow trusts the tag against __version__.
+      - name: Check version consistency
         run: |
-          python3 tests/test_fexlite_tcn_qat.py
-          python3 tests/test_fexlite_qat_rtl_export.py
-          python3 tests/test_dgru_zero_input.py
-          python3 tests/test_rtl_evaluate.py
-          python3 tests/test_api_arguments.py
-          python3 -m unittest tests.test_training_artifacts -v
-          python3 tests/test_model_id.py
-          python3 -m unittest tests.test_dataset_bundle -v
-      - name: Build wheel
-        run: python3 -m pip wheel --no-deps --wheel-dir dist .
+          set -euo pipefail
+          pkg_version="$(python -c "import re, pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('opendpd/__init__.py').read_text()).group(1))")"
+          wheel_version="$(ls dist/opendpd_tcn_qat-*.whl | sed -E 's|.*/opendpd_tcn_qat-([^-]+)-.*|\1|')"
+          echo "opendpd.__version__ = ${pkg_version}"
+          echo "built wheel version = ${wheel_version}"
+          test "${pkg_version}" = "${wheel_version}"
