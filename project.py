@@ -13,7 +13,13 @@ from typing import Any, Callable
 from torch import optim
 from torch.utils.data import DataLoader
 from arguments import get_arguments
-from modules.paths import create_folder, gen_log_stat, gen_dir_paths, gen_file_paths
+from modules.paths import (
+    create_folder,
+    gen_log_stat,
+    gen_dir_paths,
+    gen_file_paths,
+    warn_if_model_artifacts_exist,
+)
 from modules.train_funcs import net_train, net_eval, calculate_metrics
 from utils import util
 from modules.loggers import PandasLogger
@@ -112,6 +118,7 @@ class Project:
     def build_logger(self, model_id: str):
         # Get Save and Log Paths
         file_paths = gen_file_paths(self.path_dir_save, self.path_dir_log_hist, self.path_dir_log_best, model_id)
+        warn_if_model_artifacts_exist(model_id, file_paths)
         self.path_save_file_best, self.path_log_file_hist, self.path_log_file_best = file_paths
         print("::: Best Model Save Path: ", self.path_save_file_best)
         print("::: Log-History     Path: ", self.path_log_file_hist)
@@ -209,23 +216,6 @@ class Project:
         self.add_arg("device", device)
         return device
 
-    def get_amplitude(IQ_signal):
-        I = IQ_signal[:, 0]
-        Q = IQ_signal[:, 1]
-        power = I ** 2 + Q ** 2
-        amplitude = np.sqrt(power)
-        return amplitude
-
-    def set_target_gain(input_IQ, output_IQ):
-        """Calculate the total energy of the I-Q signal."""
-        amp_in = get_amplitude(input_IQ)
-        amp_out = get_amplitude(output_IQ)
-        max_in_amp = np.max(amp_in)
-        max_out_amp = np.max(amp_out)
-        target_gain = np.mean(max_out_amp / max_in_amp)
-        return target_gain
-
-
     def build_dataloaders(self):
         from modules.data_collector import IQSegmentDataset, IQFrameDataset, load_dataset
 
@@ -251,9 +241,19 @@ class Project:
         test_set = IQSegmentDataset(X_test, y_test, nperseg=self.args.nperseg)
 
         # Define PyTorch Dataloaders
-        train_loader = DataLoader(train_set, batch_size=self.batch_size, shuffle=True)
-        val_loader = DataLoader(val_set, batch_size=self.batch_size_eval, shuffle=False)
-        test_loader = DataLoader(test_set, batch_size=self.batch_size_eval, shuffle=False)
+        pin_memory = self.device.type == 'cuda'
+        train_loader = DataLoader(
+            train_set, batch_size=self.batch_size, shuffle=True,
+            pin_memory=pin_memory
+        )
+        val_loader = DataLoader(
+            val_set, batch_size=self.batch_size_eval, shuffle=False,
+            pin_memory=pin_memory
+        )
+        test_loader = DataLoader(
+            test_set, batch_size=self.batch_size_eval, shuffle=False,
+            pin_memory=pin_memory
+        )
 
         return (train_loader, val_loader, test_loader), input_size
 
@@ -290,18 +290,33 @@ class Project:
             raise AttributeError('Please use a valid loss function. Check argument.py.')
 
     def build_optimizer(self, net: nn.Module):
+        # Frozen PA parameters in a cascaded DPD model never receive gradients;
+        # excluding them avoids needless optimizer and clipping traversal while
+        # leaving the DPD updates unchanged.
+        trainable_params = tuple(
+            parameter for parameter in net.parameters() if parameter.requires_grad
+        )
+        if not trainable_params:
+            raise ValueError("Cannot build an optimizer without trainable parameters")
+
         # Optimizer
         if self.opt_type == 'adam':
-            optimizer = optim.Adam(net.parameters(), lr=self.lr)
+            optimizer = optim.Adam(trainable_params, lr=self.lr)
         elif self.opt_type == 'sgd':
-            optimizer = optim.SGD(net.parameters(), lr=self.lr, momentum=0.9)
+            optimizer = optim.SGD(trainable_params, lr=self.lr, momentum=0.9)
         elif self.opt_type == 'rmsprop':
-            optimizer = optim.RMSprop(net.parameters(), lr=self.lr)
+            optimizer = optim.RMSprop(trainable_params, lr=self.lr)
         elif self.opt_type == 'adamw':
-            optimizer = optim.AdamW(net.parameters(), lr=self.lr)
+            optimizer = optim.AdamW(
+                trainable_params,
+                lr=self.lr,
+                weight_decay=0.01,
+                betas=(0.9, 0.999),
+                eps=1e-8,
+            )
         elif self.opt_type == 'adabound':
             import adabound  # Run pip install adabound (https://github.com/Luolc/AdaBound)
-            optimizer = adabound.AdaBound(net.parameters(), lr=self.lr, final_lr=0.1)
+            optimizer = adabound.AdaBound(trainable_params, lr=self.lr, final_lr=0.1)
         else:
             raise RuntimeError('Please use a valid optimizer.')
 
@@ -311,7 +326,10 @@ class Project:
                                                             factor=self.decay_factor,
                                                             patience=self.patience,
                                                             threshold=1e-4,
-                                                            min_lr=self.lr_end)
+                                                            threshold_mode='rel',
+                                                            cooldown=0,
+                                                            min_lr=self.lr_end,
+                                                            eps=1e-8)
         return optimizer, lr_scheduler
 
     @staticmethod
@@ -387,7 +405,8 @@ class Project:
                             criterion=criterion,
                             dataloader=train_loader,
                             grad_clip_val=self.grad_clip_val,
-                            device=self.device)
+                            device=self.device,
+                            cuda_graph_training=self.cuda_graph_training)
 
             # -----------
             # Validation

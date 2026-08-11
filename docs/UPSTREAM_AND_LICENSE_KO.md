@@ -3,10 +3,10 @@
 # Upstream과 라이선스
 
 이 저장소는 [lab-emi/OpenDPD](https://github.com/lab-emi/OpenDPD)의 정식
-GitHub fork이며, `98c2622cfef9ef537a250e118d811a6ae7333f53` 커밋에서 분기한
+GitHub fork이며, `7426bbf8a47624b59bd7f045a86641b403023f3c` 커밋까지 동기화한
 수정 저작물이다.
 기존 Apache License 2.0 전문과 upstream 저자 표시를 유지한다. 논문 citation은
-[고정한 upstream commit의 README](https://github.com/lab-emi/OpenDPD/blob/98c2622cfef9ef537a250e118d811a6ae7333f53/README.md)에서
+[동기화한 upstream commit의 README](https://github.com/lab-emi/OpenDPD/blob/7426bbf8a47624b59bd7f045a86641b403023f3c/README.md)에서
 확인할 수 있다.
 
 주요 수정 범위는 다음과 같다.
@@ -24,8 +24,8 @@ GitHub fork이며, `98c2622cfef9ef537a250e118d811a6ae7333f53` 커밋에서 분�
 `artifacts/checkpoints/`에는 재현 검증용 소형 reference checkpoint가 별도 tracked
 artifact로 포함될 수 있다. 합성 library와 EDA binary는 소스 배포물에 포함하지 않는다.
 
-GitHub fork parent, 공식 upstream URL과 source commit이 provenance 기록을 이룬다.
-`tcn-qat` branch가 DPD-Flow 수정사항을 소유한다. Upstream 변경은 전용 sync branch에서
-`lab-emi/OpenDPD`로부터 fetch한 뒤 `tcn-qat`에 병합한다. DPD-Flow submodule pointer를
-갱신하기 전에 local QAT, integer export, frozen-PA, dataset 및 regression 계약을 모두
-보존하고 다시 검증해야 한다.
+GitHub fork parent, 공식 upstream URL과 위 동기화 commit이 provenance 기록을 이룬다.
+Fork의 `main`은 공식 upstream을 따르고 `tcn-qat` branch가 DPD-Flow 수정사항을
+소유한다. 동기화할 때는 upstream이 직접 제거한 파일을 제외한 원본 파일을 보존한다.
+DPD-Flow submodule pointer를 갱신하기 전에 local QAT, integer export, frozen-PA,
+dataset 및 regression 계약을 모두 다시 검증해야 한다.

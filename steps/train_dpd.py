@@ -215,7 +215,9 @@ def main(proj: Project):
                              num_layers=proj.PA_num_layers,
                              backbone_type=proj.PA_backbone,
                              window_size=proj.window_size,
-                             num_dvr_units=proj.num_dvr_units)
+                             num_dvr_units=proj.num_dvr_units,
+                             thx=proj.thx,
+                             thh=proj.thh)
     n_net_pa_params = count_net_params(net_pa)
     print("::: Number of PA Model Parameters: ", n_net_pa_params)
     pa_model_id = proj.gen_pa_model_id(n_net_pa_params)
@@ -241,6 +243,8 @@ def main(proj: Project):
                               tcn_dilation_base=proj.tcn_dilation_base)
 
     net_dpd = get_quant_model(proj, net_dpd)
+    if proj.collect_delta_stats and hasattr(net_dpd.backbone, 'set_debug'):
+        net_dpd.backbone.set_debug(1)
 
     print("::: DPD Model: ", net_dpd)
     n_net_dpd_params = count_net_params(net_dpd)

@@ -1,0 +1,48 @@
+name: Weekly
+
+on:
+  schedule:
+    # Every Monday at 03:00 UTC — regular health check of the full test
+    # suite, independent of push activity.
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extended:
+    name: Extended tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.13"]
+        include:
+          - os: ubuntu-latest
+            python-version: "3.10"
+    env:
+      MPLBACKEND: Agg
+      TQDM_DISABLE: "1"
+      KMP_DUPLICATE_LIB_OK: "TRUE"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install PyTorch (CPU)
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install OpenDPD
+        run: pip install -e ".[dev]"
+
+      # Runs the complete suite, including tests marked "extended"
+      # (all-backbone training smoke tests and all-dataset E2E chains).
+      - name: Run full test suite
+        run: pytest tests/ -v --durations=20

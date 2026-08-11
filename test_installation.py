@@ -25,7 +25,7 @@ def test_api_functions():
     print("\nTest 2: Checking API functions...")
     try:
         import opendpd
-        functions = ['train_pa', 'train_dpd', 'run_dpd', 'load_dataset', 'create_dataset', 'OpenDPDTrainer']
+        functions = ['train_pa', 'train_dpd', 'run_dpd', 'plot_dpd', 'load_dataset', 'create_dataset', 'OpenDPDTrainer']
         missing = []
         for func in functions:
             if not hasattr(opendpd, func):
@@ -82,9 +82,11 @@ def test_dataset_loading():
             print("    Skipping dataset loading test")
             return True
         
-        # Find first dataset
-        available_datasets = [d for d in os.listdir(datasets_dir) 
-                            if os.path.isdir(os.path.join(datasets_dir, d))]
+        # Find datasets deterministically (only directories with a spec.json;
+        # os.listdir order is arbitrary and datasets/ also holds non-dataset
+        # folders such as MATLAB/)
+        available_datasets = sorted(d for d in os.listdir(datasets_dir)
+                            if os.path.isfile(os.path.join(datasets_dir, d, 'spec.json')))
         
         if not available_datasets:
             print("  ⚠ No datasets found in datasets/ directory")

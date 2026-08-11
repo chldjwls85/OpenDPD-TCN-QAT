@@ -2,12 +2,12 @@
 
 # Upstream and License
 
-This repository is an official GitHub fork and modified work based on commit
-`98c2622cfef9ef537a250e118d811a6ae7333f53` of
+This repository is an official GitHub fork and modified work synchronized
+through commit `7426bbf8a47624b59bd7f045a86641b403023f3c` of
 [lab-emi/OpenDPD](https://github.com/lab-emi/OpenDPD). It retains the full
 Apache License 2.0 text and upstream author attributions. Publication citations
 remain available in the
-[README at the pinned upstream commit](https://github.com/lab-emi/OpenDPD/blob/98c2622cfef9ef537a250e118d811a6ae7333f53/README.md).
+[README at the synchronized upstream commit](https://github.com/lab-emi/OpenDPD/blob/7426bbf8a47624b59bd7f045a86641b403023f3c/README.md).
 
 The principal modifications are:
 
@@ -26,9 +26,9 @@ small reference checkpoint as a separately tracked artifact under
 `artifacts/checkpoints/` for reproducibility checks. Synthesis libraries and EDA
 binaries are not included in the source distribution.
 
-The GitHub fork parent, official upstream URL, and source commit above form the
-provenance record. The `tcn-qat` branch carries the DPD-Flow modifications;
-upstream changes are fetched from `lab-emi/OpenDPD` and merged into that branch
-only on a dedicated sync branch. Every sync must preserve and rerun the local
+The GitHub fork parent, official upstream URL, and synchronized commit above
+form the provenance record. The fork's `main` branch follows official upstream;
+the `tcn-qat` branch carries the DPD-Flow modifications. Every sync must preserve
+upstream files except for removals made by upstream itself and rerun the local
 QAT, integer-export, frozen-PA, dataset, and regression contracts before the
 DPD-Flow submodule pointer is advanced.

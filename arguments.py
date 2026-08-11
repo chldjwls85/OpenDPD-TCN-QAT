@@ -32,22 +32,32 @@ def get_arguments():
     parser.add_argument('--seed', default=0, type=int, help='Global random number seed.')
     parser.add_argument('--loss_type', default='l2', choices=['l1', 'l2'], help='Type of loss function.')
     parser.add_argument('--opt_type', default='adamw', choices=['sgd', 'adam', 'adamw', 'adabound', 'rmsprop'], help='Type of optimizer.')
-    parser.add_argument('--batch_size', default=256, type=int, help='Batch size for training.')
-    parser.add_argument('--batch_size_eval', default=256, type=int, help='Batch size for evaluation.')
-    parser.add_argument('--n_epochs', default=100, type=int, help='Number of epochs to train for.')
-    parser.add_argument('--lr_schedule', default=0, type=int, help='Whether enable learning rate scheduling')
-    parser.add_argument('--lr', default=5e-4, type=float, help='Learning rate')
-    parser.add_argument('--lr_end', default=1e-4, type=float, help='Learning rate')
-    parser.add_argument('--decay_factor', default=0.1, type=float, help='Learning rate')
-    parser.add_argument('--patience', default=10, type=float, help='Learning rate')
+    parser.add_argument('--batch_size', default=64, type=int, help='Batch size for training.')
+    parser.add_argument('--batch_size_eval', default=64, type=int, help='Batch size for evaluation.')
+    parser.add_argument('--n_epochs', default=300, type=int, help='Number of epochs to train for.')
+    parser.add_argument('--lr_schedule', default=1, type=int,
+                        help='Whether to enable ReduceLROnPlateau learning-rate scheduling.')
+    parser.add_argument('--lr', default=5e-3, type=float, help='Initial learning rate.')
+    parser.add_argument('--lr_end', default=5e-5, type=float, help='Minimum learning rate.')
+    parser.add_argument('--decay_factor', default=0.5, type=float,
+                        help='Learning-rate reduction factor.')
+    parser.add_argument('--patience', default=5, type=int,
+                        help='Scheduler patience in epochs.')
     parser.add_argument('--grad_clip_val', default=200, type=float, help='Gradient clipping.')
+    parser.add_argument(
+        '--cuda_graph_training', action='store_true', default=False,
+        help=(
+            'Opt in to guarded whole-step CUDA-graph replay for supported '
+            'TRes-DeltaGRU DPD training.'
+        ),
+    )
     # GMP Hyperparameters
     parser.add_argument('--K', default=5, type=int, help='Degree of GMP model')
     parser.add_argument('--gmp_memory_length', default=11, type=int, help='Memory length of GMP model')
     # Power Amplifier Model Settings
     parser.add_argument('--PA_backbone', default='gru',
                         choices=['gmp','deltagru', 'deltajanet', 'janet', 'fcn', 'gru', 'dgru', 'qgru', 'qgru_amp1', 'lstm', 'vdlstm',
-                                'rvtdcnn', 'mamba', 'tcn', 'pntdnn', 'pdgru', 'pgjanet', 'dvrjanet', 'bojanet', 'pnjanet', 'apnrnn', 'djanet', 'mcldnn'],
+                                'rvtdcnn', 'mamba', 'tcn', 'tres_deltagru', 'tres_gru', 'pntdnn', 'pdgru', 'pgjanet', 'dvrjanet', 'bojanet', 'pnjanet', 'apnrnn', 'djanet', 'mcldnn'],
                         help='Modeling PA Recurrent layer type')
     parser.add_argument('--PA_hidden_size', default=23, type=int,
                         help='Hidden size of PA backbone')
@@ -61,7 +71,7 @@ def get_arguments():
     # Digital Predistortion Model Settings
     parser.add_argument('--DPD_backbone', default='gru',
                         choices=['gmp', 'deltagru', 'deltajanet', 'janet', 'snn', 'fcn', 'gru', 'dgru', 'qgru', 'qgru_amp1', 'lstm', 'vdlstm',
-                                'rvtdcnn', 'tres_deltagru', 'tcn', 'fexlite_causal_tcn', 'pntdnn', 'pdgru', 'pgjanet', 'dvrjanet', 'bojanet', 'pnjanet', 'djanet', 'mcldnn'],
+                                'rvtdcnn', 'tres_deltagru', 'tres_gru', 'tcn', 'fexlite_causal_tcn', 'pntdnn', 'pdgru', 'pgjanet', 'dvrjanet', 'bojanet', 'pnjanet', 'djanet', 'mcldnn'],
                         help='DPD model Recurrent layer type')
     parser.add_argument('--DPD_hidden_size', default=15, type=int, help='Hidden size of DPD backbone.')
     parser.add_argument('--DPD_num_layers', default=1, type=int, help='Number of layers of the DPD backbone.')
@@ -110,6 +120,8 @@ def get_arguments():
                         help='Threshold for input deltas')
     parser.add_argument('--thh', type=float, default=0.0,
                         help='Threshold for hidden state deltas')
+    parser.add_argument('--collect_delta_stats', action='store_true', default=False,
+                        help='Collect temporal delta sparsity diagnostics during training (adds overhead).')
 
     # Optionally, you might want to add DVR-specific arguments
     parser.add_argument('--num_dvr_units', default=3, type=int,
