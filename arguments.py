@@ -85,6 +85,22 @@ def get_arguments():
                         help='Training batches used to calibrate TCN activation scales.')
     parser.add_argument('--quant_calibration_quantile', default=0.9999, type=float,
                         help='Absolute activation quantile used for power-of-two QAT scales.')
+    parser.add_argument(
+        '--quantize_hardswish_input', action='store_true', default=False,
+        help=(
+            'Insert a signed n_bits_a power-of-two fake-quantizer between each '
+            'TCN MAC accumulator and HardSwish.'
+        ),
+    )
+    parser.add_argument(
+        '--activation_rounding',
+        default='round_to_nearest_ties_to_even',
+        choices=['round_to_nearest_ties_to_even', 'discard_lsb_signed_floor'],
+        help=(
+            'Rounding used at explicit pre/post-HardSwish activation '
+            'boundaries. discard_lsb_signed_floor matches an arithmetic shift.'
+        ),
+    )
     parser.add_argument('--q_pretrain', default=False, type=bool, help='pretrain the model with \
                         self-implementation float models for quantization')
 

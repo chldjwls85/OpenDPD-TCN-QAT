@@ -26,6 +26,8 @@ def _quantized_model(
     kernel_size: int,
     dilation_base: int = 2,
     bits: int = 8,
+    quantize_hardswish_input: bool = False,
+    activation_rounding: str = "round_to_nearest_ties_to_even",
 ):
     project = SimpleNamespace(
         quant=True,
@@ -36,6 +38,8 @@ def _quantized_model(
         DPD_backbone="fexlite_causal_tcn",
         quant_calibration_batches=1,
         quant_calibration_quantile=0.9999,
+        quantize_hardswish_input=quantize_hardswish_input,
+        activation_rounding=activation_rounding,
     )
     float_model = CoreModel(
         2,
@@ -61,6 +65,46 @@ def _assert_zero_lsb(test: unittest.TestCase, manifest_path: Path) -> None:
 
 
 class FExLiteQATRTLExportTests(unittest.TestCase):
+    def test_pre_hardswish_floor_checkpoint_exports_explicit_bit_exact_boundary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint = root / "pre_hs_floor.pt"
+            model = _quantized_model(
+                2,
+                1,
+                3,
+                bits=14,
+                quantize_hardswish_input=True,
+                activation_rounding="discard_lsb_signed_floor",
+            )
+            torch.save(model.state_dict(), checkpoint)
+            output = root / "export"
+            manifest = export_fexlite_qat_rtl(
+                checkpoint, output, golden_length=16, golden_seed=23
+            )
+            layers = manifest["model"]["layers"]
+            self.assertTrue(all(
+                layer["hardswish_input"] is not None for layer in layers[:-1]
+            ))
+            self.assertIsNone(layers[-1]["hardswish_input"])
+            self.assertTrue(all(
+                layer["hardswish_input"]["bits"] == 14
+                and layer["hardswish_input"]["rounding"]
+                == "discard_lsb_signed_floor"
+                for layer in layers[:-1]
+            ))
+            self.assertEqual(
+                manifest["quantization"]["numeric_contract"][
+                    "activation_boundary_rounding"
+                ],
+                "discard_lsb_signed_floor",
+            )
+            self.assertIn(
+                "conv0_hardswish_input",
+                manifest["golden_vectors"]["files"],
+            )
+            _assert_zero_lsb(self, output / "manifest.json")
+
     def test_toy_h2_l1_k3_spec_export_is_atomic_and_bit_exact(self):
         with tempfile.TemporaryDirectory() as directory:
             tmp_path = Path(directory)

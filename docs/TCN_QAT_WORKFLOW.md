@@ -76,6 +76,8 @@ python3 main.py --step train_dpd --dataset_name DPA_200MHz \
   --DPD_hidden_size 13 --DPD_num_layers 4 \
   --tcn_kernel_size 5 --tcn_dilation_base 2 \
   --quant --n_bits_a 14 --n_bits_w 14 \
+  --quantize_hardswish_input \
+  --activation_rounding discard_lsb_signed_floor \
   --pretrained_model /path/to/DPD_FP32.pt \
   --pa_checkpoint /path/to/PA.pt \
   --qat_output_checkpoint /path/to/DPD_QAT.pt \
@@ -87,6 +89,13 @@ raw I/Q immediately on entry, so A14 includes the external activation boundary;
 the source CSV files are not rewritten as integer files. Calibration uses only
 the training split. The published checkpoint is accompanied by calibration and
 model-spec JSON sidecars.
+
+With the two activation options above, every wide MAC/bias accumulator is
+fake-quantized to signed A14 before HardSwish, and the HardSwish result is
+fake-quantized again at the next convolution input. Both internal boundaries
+discard two's-complement LSBs, so negative nonmultiples round toward minus
+infinity. Raw-I/Q, FEx, and final residual/output boundaries retain their RNE
+contract so this experiment changes only the activation datapath.
 
 ### 2. Integer export
 

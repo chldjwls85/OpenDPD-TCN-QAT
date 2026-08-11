@@ -112,6 +112,13 @@ def _qat_sidecars(proj: Project, checkpoint: Path) -> dict[str, dict]:
             'seed': proj.seed,
             'activation_bits': proj.n_bits_a,
             'weight_bits': proj.n_bits_w,
+            'quantize_hardswish_input': bool(
+                getattr(proj, 'quantize_hardswish_input', False)
+            ),
+            'activation_rounding': getattr(
+                proj, 'activation_rounding',
+                'round_to_nearest_ties_to_even'
+            ),
             'quantile': proj.quant_calibration_quantile,
             'maximum_batches': proj.quant_calibration_batches,
             'checkpoint_sha256': checkpoint_sha256,
@@ -129,6 +136,13 @@ def _qat_sidecars(proj: Project, checkpoint: Path) -> dict[str, dict]:
                 proj.tcn_dilation_base ** index
                 for index in range(proj.DPD_num_layers)
             ],
+            'quantize_hardswish_input': bool(
+                getattr(proj, 'quantize_hardswish_input', False)
+            ),
+            'activation_rounding': getattr(
+                proj, 'activation_rounding',
+                'round_to_nearest_ties_to_even'
+            ),
             'activation': 'hardswish',
         },
     }

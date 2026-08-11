@@ -88,6 +88,13 @@ class Project:
                     'A': f"{self.n_bits_a:d}",
                     'W': f"{self.n_bits_w:d}",
                 })
+                if getattr(self, 'quantize_hardswish_input', False):
+                    dict_dpd['HSA'] = f"{self.n_bits_a:d}"
+                if getattr(
+                    self, 'activation_rounding',
+                    'round_to_nearest_ties_to_even'
+                ) == 'discard_lsb_signed_floor':
+                    dict_dpd['AR'] = 'FLOOR'
         dict_dpd['P'] = f"{n_net_params:d}"
         if 'delta' in self.DPD_backbone:
             dict_dpd['THX'] = f"{self.thx:.3f}"

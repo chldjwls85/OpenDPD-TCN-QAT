@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from .quant_envs import AttrDict, Base_GRUQuantEnv, FExLiteTCNQuantEnv
+from .qmodules.quantizers import ROUND_TO_NEAREST_TIES_TO_EVEN
 
 __all__ = [
     "get_quant_model", "AttrDict", "Base_GRUQuantEnv", "FExLiteTCNQuantEnv"
@@ -24,6 +25,12 @@ def _build_quant_args(proj: Any) -> AttrDict:
         ),
         "quant_calibration_quantile": getattr(
             proj, "quant_calibration_quantile", 0.9999
+        ),
+        "quantize_hardswish_input": getattr(
+            proj, "quantize_hardswish_input", False
+        ),
+        "activation_rounding": getattr(
+            proj, "activation_rounding", ROUND_TO_NEAREST_TIES_TO_EVEN
         ),
     })
 

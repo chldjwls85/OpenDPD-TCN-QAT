@@ -83,6 +83,32 @@ processes layers sequentially so that every Conv1d observes the same samples.
 The raw/output interface scales remain fixed; only internal activation scales
 are set to powers of two that cover the absolute quantile.
 
+## MAC-to-Activation Quantization
+
+The legacy path keeps each convolution's natural-width MAC/bias accumulator
+wide through HardSwish and quantizes only the HardSwish result at the next
+Conv1d input. This is numerically convenient, but it leaves the activation's
+quadratic datapath much wider than A bits.
+
+`--quantize_hardswish_input` adds the hardware-oriented boundary used by the
+A14 experiment:
+
+```text
+wide MAC/bias accumulator
+  -> signed A-bit pre-HardSwish quantizer
+  -> HardSwish
+  -> signed A-bit next-layer input quantizer
+```
+
+`--activation_rounding discard_lsb_signed_floor` applies literal
+two's-complement LSB discard at both internal boundaries. It is an arithmetic
+right-shift policy: a negative discarded remainder rounds toward minus
+infinity, not toward zero. Both quantizers use identity straight-through
+estimators during QAT. The exporter records their independent power-of-two
+scales and rounding policy, publishes a pre-HardSwish golden trace, and the
+integer reference and RTL must match every such trace at 0 LSB. Raw I/Q, FEx,
+and final residual/output requantization remain RNE in this isolated policy.
+
 ## Export and Equivalence Boundary
 
 The exporter publishes a self-contained `opendpd_fexlite_qat_rtl_export` v1

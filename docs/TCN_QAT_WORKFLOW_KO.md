@@ -71,6 +71,8 @@ python3 main.py --step train_dpd --dataset_name DPA_200MHz \
   --DPD_hidden_size 13 --DPD_num_layers 4 \
   --tcn_kernel_size 5 --tcn_dilation_base 2 \
   --quant --n_bits_a 14 --n_bits_w 14 \
+  --quantize_hardswish_input \
+  --activation_rounding discard_lsb_signed_floor \
   --pretrained_model /path/to/DPD_FP32.pt \
   --pa_checkpoint /path/to/PA.pt \
   --qat_output_checkpoint /path/to/DPD_QAT.pt \
@@ -81,6 +83,12 @@ Dataset CSV 값은 FP32 측정값으로 읽는다. 모델 진입 직후 raw I/Q�
 A14에는 외부 activation 경계도 포함된다. 원본 CSV를 integer 파일로 다시 쓰지는 않는다.
 Calibration에는 train split만 사용한다. 출판된 checkpoint 옆에는 calibration 및
 model-spec JSON sidecar가 함께 생성된다.
+
+위 두 activation option을 사용하면 모든 넓은 MAC/bias accumulator를 HardSwish 전에
+signed A14로 fake quantize하고, HardSwish 결과도 다음 convolution 입력에서 다시 fake
+quantize한다. 두 내부 경계는 2의 보수 LSB를 버리므로 나누어떨어지지 않는 음수는
+마이너스 무한대 방향으로 내려간다. Raw I/Q, FEx, 마지막 residual/output 경계는 RNE
+계약을 유지하므로 이 실험은 activation datapath만 바꾼다.
 
 ### 2. Integer export
 

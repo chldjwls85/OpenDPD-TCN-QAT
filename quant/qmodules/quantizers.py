@@ -1,5 +1,13 @@
 import torch
 
+
+ROUND_TO_NEAREST_TIES_TO_EVEN = "round_to_nearest_ties_to_even"
+DISCARD_LSB_SIGNED_FLOOR = "discard_lsb_signed_floor"
+SUPPORTED_ROUNDING_MODES = {
+    ROUND_TO_NEAREST_TIES_TO_EVEN,
+    DISCARD_LSB_SIGNED_FLOOR,
+}
+
 def grad_scale(x, scale):
     y = x
     y_grad = x * scale
@@ -12,12 +20,34 @@ def round_pass(x):
     return (y - y_grad).detach() + y_grad
 
 
+def floor_pass(x):
+    """Arithmetic-LSB-discard fake quantization with an identity STE.
+
+    ``floor`` is the real-number equivalent of a two's-complement arithmetic
+    right shift. In particular, negative values round toward minus infinity,
+    not toward zero.
+    """
+
+    y = x.floor()
+    y_grad = x
+    return (y - y_grad).detach() + y_grad
+
+
 class INT_Quantizer(torch.nn.Module):
-    def __init__(self, bits, all_positive=False):
+    def __init__(
+        self,
+        bits,
+        all_positive=False,
+        rounding=ROUND_TO_NEAREST_TIES_TO_EVEN,
+    ):
         super().__init__()
-    
+
+        if rounding not in SUPPORTED_ROUNDING_MODES:
+            raise ValueError(f"unsupported integer rounding mode: {rounding}")
+
         self.bits = bits
         self.all_positive = all_positive
+        self.rounding = rounding
         
         if(all_positive):
             self.Qn = 0
@@ -74,7 +104,10 @@ class INT_Quantizer(torch.nn.Module):
         x = x.clamp(self.Qn, self.Qp)
         
         # zp = round_pass(self.zp)
-        x_bar = round_pass(x)
+        if self.rounding == ROUND_TO_NEAREST_TIES_TO_EVEN:
+            x_bar = round_pass(x)
+        else:
+            x_bar = floor_pass(x)
 
         x_hat = x_bar * pow2_scale
                 

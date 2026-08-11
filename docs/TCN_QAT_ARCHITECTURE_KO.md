@@ -74,6 +74,29 @@ Calibration은 train loader의 최초 N batch를 한 번 cache하고 모든 Conv
 관찰하도록 순차 수행한다. Raw/output interface scale은 고정하고 내부 activation scale만
 absolute quantile을 덮는 power-of-two로 설정한다.
 
+## MAC-Activation 양자화
+
+기존 경로는 각 convolution의 자연 폭 MAC/bias accumulator를 HardSwish까지 넓은 폭으로
+유지하고, HardSwish 결과만 다음 Conv1d 입력에서 양자화한다. 수치 계산에는 편리하지만
+activation의 이차 연산 datapath가 A bit보다 훨씬 넓게 남는다.
+
+`--quantize_hardswish_input`은 A14 실험에 사용한 하드웨어 지향 경계를 추가한다.
+
+```text
+넓은 MAC/bias accumulator
+  -> signed A-bit HardSwish 입력 quantizer
+  -> HardSwish
+  -> signed A-bit 다음 layer 입력 quantizer
+```
+
+`--activation_rounding discard_lsb_signed_floor`는 두 내부 경계에서 2의 보수 LSB를
+그대로 버린다. 즉 arithmetic right-shift 정책이며, 버린 나머지가 있는 음수는 0이 아니라
+마이너스 무한대 방향으로 내려간다. QAT에서는 두 quantizer 모두 identity straight-through
+estimator를 사용한다. Exporter는 서로 독립적인 power-of-two scale과 rounding 정책을
+기록하고 HardSwish 입력 golden trace를 출판한다. Integer reference와 RTL은 이 trace까지
+모두 0 LSB로 맞아야 한다. 이 격리 정책에서 raw I/Q, FEx, 마지막 residual/output
+requantization은 RNE를 유지한다.
+
 ## Export와 정합성 경계
 
 Exporter는 `manifest.json`, `weights/*.mem`, `golden_vectors/*.mem`으로 구성된

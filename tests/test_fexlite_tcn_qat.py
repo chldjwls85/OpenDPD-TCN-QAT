@@ -16,6 +16,11 @@ if str(REPO_ROOT) not in sys.path:
 from models import CoreModel
 from quant import get_quant_model
 from quant.qmodules.quant_layers import INT_Conv1D
+from quant.qmodules.quant_activations import INT_Hardswish
+from quant.qmodules.quantizers import (
+    DISCARD_LSB_SIGNED_FLOOR,
+    INT_Quantizer,
+)
 
 
 def _project(bits=8, pretrained_model=""):
@@ -28,6 +33,8 @@ def _project(bits=8, pretrained_model=""):
         DPD_backbone="fexlite_causal_tcn",
         quant_calibration_batches=2,
         quant_calibration_quantile=1.0,
+        quantize_hardswish_input=False,
+        activation_rounding="round_to_nearest_ties_to_even",
     )
 
 
@@ -117,6 +124,58 @@ def test_tcn_qat_fails_closed_for_missing_pretrained_checkpoint():
             RuntimeError, "native FExLite TCN QAT setup failed"
         ):
             get_quant_model(project, CoreModel(2, 2, 1, "fexlite_causal_tcn"))
+
+
+def test_signed_floor_quantizer_discards_twos_complement_lsbs_with_ste():
+    quantizer = INT_Quantizer(
+        bits=4, all_positive=False, rounding=DISCARD_LSB_SIGNED_FLOOR
+    )
+    quantizer.scale.data.fill_(0.5)
+    values = torch.tensor([-1.26, -0.74, 0.74, 1.26], requires_grad=True)
+    output = quantizer(values)
+    assert torch.equal(output.detach(), torch.tensor([-1.5, -1.0, 0.5, 1.0]))
+    output.sum().backward()
+    assert torch.equal(values.grad, torch.ones_like(values))
+
+
+def test_pre_hardswish_a14_floor_qat_is_explicit_and_calibrated():
+    torch.manual_seed(17)
+    project = _project(bits=14)
+    project.quantize_hardswish_input = True
+    project.activation_rounding = DISCARD_LSB_SIGNED_FLOOR
+    model = get_quant_model(
+        project,
+        CoreModel(2, 3, 2, "fexlite_causal_tcn", tcn_kernel_size=3),
+    )
+    convs = [module for module in model.modules() if isinstance(module, INT_Conv1D)]
+    activations = [
+        module for module in model.modules() if isinstance(module, INT_Hardswish)
+    ]
+    assert len(convs) == 4
+    assert len(activations) == 3
+    assert convs[0].act_quantizer.rounding != DISCARD_LSB_SIGNED_FLOOR
+    assert all(
+        layer.act_quantizer.rounding == DISCARD_LSB_SIGNED_FLOOR
+        for layer in convs[1:]
+    )
+    assert all(
+        layer.input_quantizer.bits == 14
+        and layer.input_quantizer.rounding == DISCARD_LSB_SIGNED_FLOOR
+        for layer in activations
+    )
+    features = torch.randn(6, 20, 2).clamp(-1.0, 1.0)
+    loader = DataLoader(
+        TensorDataset(features, torch.zeros_like(features)), batch_size=2
+    )
+    calibration = project.quant_env.calibrate(loader, torch.device("cpu"))
+    assert {
+        "hardswish0_input", "hardswish1_input", "hardswish2_input"
+    } <= calibration.keys()
+    for index, activation in enumerate(activations):
+        assert activation.input_quantizer.scale * activation.input_quantizer.Qp >= 3.0
+        assert calibration[f"hardswish{index}_input"]["rounding"] == (
+            DISCARD_LSB_SIGNED_FLOOR
+        )
 
 
 if __name__ == "__main__":

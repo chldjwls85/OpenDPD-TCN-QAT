@@ -24,12 +24,17 @@ import torch
 
 from models import CoreModel
 from quant import get_quant_model
+from quant.qmodules.quant_activations import INT_Hardswish
 from quant.qmodules.quant_layers import INT_Conv1D
+from quant.qmodules.quantizers import (
+    DISCARD_LSB_SIGNED_FLOOR,
+    ROUND_TO_NEAREST_TIES_TO_EVEN,
+)
 from quant.rtl_manifest import validate_manifest_v1
 
 
 EXPORT_FORMAT_VERSION = 1
-ROUNDING_MODE = "round_to_nearest_ties_to_even"
+ROUNDING_MODE = ROUND_TO_NEAREST_TIES_TO_EVEN
 RTL_SPEC_VERSION = 1
 LEGACY_DILATION_BASE = 2
 
@@ -97,13 +102,26 @@ def _quantizer_record(quantizer) -> dict[str, Any]:
         "scale": scale,
         "scale_exponent": exponent,
         "zero_point": 0,
-        "rounding": ROUNDING_MODE,
+        "rounding": quantizer.rounding,
         "overflow": "saturate_at_explicit_quantizer_output",
     }
 
 
-def quantize_codes(value: torch.Tensor, scale: float, qmin: int, qmax: int) -> torch.Tensor:
-    return torch.round(value.detach().cpu() / scale).clamp(qmin, qmax).to(torch.int64)
+def quantize_codes(
+    value: torch.Tensor,
+    scale: float,
+    qmin: int,
+    qmax: int,
+    rounding: str = ROUNDING_MODE,
+) -> torch.Tensor:
+    scaled = value.detach().cpu() / scale
+    if rounding == ROUNDING_MODE:
+        codes = torch.round(scaled)
+    elif rounding == DISCARD_LSB_SIGNED_FLOOR:
+        codes = torch.floor(scaled)
+    else:
+        raise ValueError(f"unsupported integer rounding mode: {rounding}")
+    return codes.clamp(qmin, qmax).to(torch.int64)
 
 
 def round_divide_even(numerator: torch.Tensor, denominator: int) -> torch.Tensor:
@@ -129,6 +147,30 @@ def requantize_pow2(
     if shift >= 0:
         return round_divide_even(numerator << shift, divisor)
     return round_divide_even(numerator, divisor << (-shift))
+
+
+def requantize_pow2_with_rounding(
+    numerator: torch.Tensor,
+    source_exponent: int,
+    target_exponent: int,
+    divisor: int = 1,
+    rounding: str = ROUNDING_MODE,
+) -> torch.Tensor:
+    if rounding == ROUNDING_MODE:
+        return requantize_pow2(
+            numerator, source_exponent, target_exponent, divisor
+        )
+    if rounding != DISCARD_LSB_SIGNED_FLOOR:
+        raise ValueError(f"unsupported integer rounding mode: {rounding}")
+    if divisor <= 0:
+        raise ValueError("divisor must be positive")
+    shift = int(source_exponent) - int(target_exponent)
+    if shift >= 0:
+        numerator = numerator << shift
+        denominator = divisor
+    else:
+        denominator = divisor << (-shift)
+    return torch.div(numerator, denominator, rounding_mode="floor")
 
 
 def saturate(value: torch.Tensor, bits: int, signed: bool = True) -> torch.Tensor:
@@ -250,6 +292,31 @@ def _infer_checkpoint(checkpoint: Path) -> dict[str, Any]:
         dilation_base = LEGACY_DILATION_BASE
         topology_source = "legacy_conv_shapes_with_base2"
 
+    activation_specs = [
+        value for key, value in state.items()
+        if key.endswith("backbone._activation_quant_spec")
+    ]
+    if len(activation_specs) > 1:
+        raise ValueError("checkpoint contains multiple activation quantization specs")
+    if activation_specs:
+        values = [int(value) for value in activation_specs[0].reshape(-1).tolist()]
+        if len(values) != 4 or values[0] != 1:
+            raise ValueError(
+                "activation quantization spec must contain [1, pre_hs, rounding, bits]"
+            )
+        _, pre_hardswish, rounding_code, spec_activation_bits = values
+        if pre_hardswish not in (0, 1) or rounding_code not in (0, 1):
+            raise ValueError("activation quantization spec contains an invalid policy code")
+        if spec_activation_bits != activation_bits:
+            raise ValueError("activation quantization spec precision mismatch")
+        activation_rounding = (
+            DISCARD_LSB_SIGNED_FLOOR if rounding_code == 1 else ROUNDING_MODE
+        )
+        quantize_hardswish_input = bool(pre_hardswish)
+    else:
+        activation_rounding = ROUNDING_MODE
+        quantize_hardswish_input = False
+
     if dilation_base < 1:
         raise ValueError("dilation_base must be positive")
     return {
@@ -261,6 +328,8 @@ def _infer_checkpoint(checkpoint: Path) -> dict[str, Any]:
         "dilations": [dilation_base**index for index in range(num_layers)],
         "activation_bits": activation_bits,
         "weight_bits": weight_bits,
+        "quantize_hardswish_input": quantize_hardswish_input,
+        "activation_rounding": activation_rounding,
         "topology_source": topology_source,
         "legacy_canonical_h10_l4_k5": (
             not spec_items and hidden == 10 and num_layers == 4 and kernel_size == 5
@@ -283,6 +352,8 @@ def load_qat_model(checkpoint: str | Path):
         DPD_backbone="fexlite_causal_tcn",
         quant_calibration_batches=0,
         quant_calibration_quantile=0.9999,
+        quantize_hardswish_input=bool(topology["quantize_hardswish_input"]),
+        activation_rounding=topology["activation_rounding"],
     )
     model = get_quant_model(
         project,
@@ -382,16 +453,27 @@ def _extract_layers(
     topology: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     modules = [module for module in model.modules() if isinstance(module, INT_Conv1D)]
+    hardswish_modules = [
+        module for module in model.modules() if isinstance(module, INT_Hardswish)
+    ]
     expected_count = int(topology["num_layers"]) + 2
     if len(modules) != expected_count:
         raise ValueError(
             f"FExLite causal TCN must contain {expected_count} Conv1d layers, got {len(modules)}"
+        )
+    expected_hardswish = expected_count - 1 if topology["quantize_hardswish_input"] else 0
+    if len(hardswish_modules) != expected_hardswish:
+        raise ValueError(
+            "FExLite HardSwish input quantizer count mismatch: "
+            f"expected {expected_hardswish}, got {len(hardswish_modules)}"
         )
 
     # Reject an incompatible checkpoint before creating any weight/bias memory.
     for index, module in enumerate(modules):
         activation_quant = _quantizer_record(module.act_quantizer)
         weight_quant = _quantizer_record(module.weight_quantizer)
+        if index < expected_count - 1 and topology["quantize_hardswish_input"]:
+            _quantizer_record(hardswish_modules[index].input_quantizer)
         accumulator_exponent = (
             activation_quant["scale_exponent"] + weight_quant["scale_exponent"]
         )
@@ -406,7 +488,11 @@ def _extract_layers(
         weight_quant = _quantizer_record(module.weight_quantizer)
         activation_quant = _quantizer_record(module.act_quantizer)
         weight_codes = quantize_codes(
-            module.weight, weight_quant["scale"], weight_quant["qmin"], weight_quant["qmax"]
+            module.weight,
+            weight_quant["scale"],
+            weight_quant["qmin"],
+            weight_quant["qmax"],
+            weight_quant["rounding"],
         )
         mem_path = weights_dir / f"{name}_weights.mem"
         mem = _write_mem(mem_path, weight_codes, weight_quant["bits"])
@@ -469,6 +555,12 @@ def _extract_layers(
             },
             "bias": bias_record,
             "followed_by_hardswish": index < len(modules) - 1,
+            "hardswish_input": (
+                _quantizer_record(hardswish_modules[index].input_quantizer)
+                if index < len(modules) - 1
+                and topology["quantize_hardswish_input"]
+                else None
+            ),
         }
         records.append(record)
         runtime.append({
@@ -529,16 +621,20 @@ def _hardswish_requantize(
     high = accumulator >= threshold
     middle = ~(low | high)
     result[low] = 0
-    result[high] = requantize_pow2(
-        accumulator[high], accumulator_exponent, target["scale_exponent"]
+    result[high] = requantize_pow2_with_rounding(
+        accumulator[high],
+        accumulator_exponent,
+        target["scale_exponent"],
+        rounding=target["rounding"],
     )
     middle_acc = accumulator[middle]
     numerator = middle_acc * (middle_acc + threshold)
-    result[middle] = requantize_pow2(
+    result[middle] = requantize_pow2_with_rounding(
         numerator,
         2 * accumulator_exponent,
         target["scale_exponent"],
         divisor=6,
+        rounding=target["rounding"],
     )
     return result.clamp(target["qmin"], target["qmax"]).to(torch.int64)
 
@@ -596,9 +692,24 @@ def run_integer_reference(
         traces[f"conv{index}_accumulator"] = accumulator
         record = layer["record"]
         if index < len(layers) - 1:
+            hardswish_input = record.get("hardswish_input")
+            if hardswish_input is not None:
+                accumulator_for_hardswish = requantize_pow2_with_rounding(
+                    accumulator,
+                    record["accumulator"]["scale_exponent"],
+                    hardswish_input["scale_exponent"],
+                    rounding=hardswish_input["rounding"],
+                ).clamp(
+                    hardswish_input["qmin"], hardswish_input["qmax"]
+                ).to(torch.int64)
+                traces[f"conv{index}_hardswish_input"] = accumulator_for_hardswish
+                hardswish_exponent = hardswish_input["scale_exponent"]
+            else:
+                accumulator_for_hardswish = accumulator
+                hardswish_exponent = record["accumulator"]["scale_exponent"]
             target = layers[index + 1]["record"]["input_activation"]
             activation = _hardswish_requantize(
-                accumulator, record["accumulator"]["scale_exponent"], target
+                accumulator_for_hardswish, hardswish_exponent, target
             )
             traces[f"conv{index + 1}_input"] = activation
         else:
@@ -683,17 +794,24 @@ def _fake_quant_traces(model, input_float: torch.Tensor) -> dict[str, torch.Tens
     output_record = _quantizer_record(model.output_quantizer)
 
     def capture(name: str, scale: float, channel_first: bool):
-        def hook(_module, _inputs, output):
+        def hook(module, _inputs, output):
             tensor = output.detach().cpu()
             if channel_first:
                 tensor = tensor.transpose(1, 2)
-            traces[name] = torch.round(tensor[0] / scale).to(torch.int64)
+            traces[name] = quantize_codes(
+                tensor[0],
+                scale,
+                module.Qn,
+                module.Qp,
+                module.rounding,
+            )
         return hook
 
     handles.append(model.input_quantizer.register_forward_hook(
         capture("raw_input", input_record["scale"], channel_first=False)
     ))
     conv_index = 0
+    hardswish_index = 0
     for module in model.modules():
         if isinstance(module, INT_Conv1D):
             activation_record = _quantizer_record(module.act_quantizer)
@@ -701,6 +819,16 @@ def _fake_quant_traces(model, input_float: torch.Tensor) -> dict[str, torch.Tens
                 capture(f"conv{conv_index}_input", activation_record["scale"], channel_first=True)
             ))
             conv_index += 1
+        elif isinstance(module, INT_Hardswish):
+            input_record = _quantizer_record(module.input_quantizer)
+            handles.append(module.input_quantizer.register_forward_hook(
+                capture(
+                    f"conv{hardswish_index}_hardswish_input",
+                    input_record["scale"],
+                    channel_first=True,
+                )
+            ))
+            hardswish_index += 1
     handles.append(model.output_quantizer.register_forward_hook(
         capture("dpd_output", output_record["scale"], channel_first=False)
     ))
@@ -762,6 +890,7 @@ def _source_hashes(root: Path) -> dict[str, str]:
         "backbones/fexlite_causal_tcn.py",
         "models.py",
         "quant/quant_envs.py",
+        "quant/qmodules/quant_activations.py",
         "quant/qmodules/quant_layers.py",
         "quant/qmodules/quantizers.py",
         "quant/rtl_export.py",
@@ -831,6 +960,11 @@ def _read_and_validate_qat_sidecars(
                 for index in range(int(topology["num_layers"]) + 2)
             },
         }
+        if topology["quantize_hardswish_input"]:
+            expected_calibration_names.update({
+                f"hardswish{index}_input"
+                for index in range(int(topology["num_layers"]) + 1)
+            })
         if not isinstance(calibrated, dict) or set(calibrated) != expected_calibration_names:
             raise ValueError("calibration sidecar quantizer set is incomplete")
         expected_boundary = 2.0 ** (1 - int(topology["activation_bits"]))
@@ -855,6 +989,33 @@ def _read_and_validate_qat_sidecars(
                 or not 1 <= int(record.get("batches", 0)) <= maximum_batches
             ):
                 raise ValueError(f"calibration sidecar {name} contract mismatch")
+        for index in range(
+            int(topology["num_layers"]) + 1
+            if topology["quantize_hardswish_input"] else 0
+        ):
+            name = f"hardswish{index}_input"
+            record = calibrated[name]
+            scale = record.get("scale")
+            if (
+                record.get("bits") != int(topology["activation_bits"])
+                or record.get("rounding") != topology["activation_rounding"]
+                or not isinstance(scale, (int, float))
+                or not math.isfinite(float(scale))
+                or float(scale) <= 0.0
+                or float(scale) != 2.0 ** round(math.log2(float(scale)))
+                or float(record.get("design_clip", 0.0)) < 3.0
+                or record.get("quantile") != quantile
+                or not 1 <= int(record.get("batches", 0)) <= maximum_batches
+            ):
+                raise ValueError(f"calibration sidecar {name} contract mismatch")
+        if bool(calibration.get("quantize_hardswish_input", False)) != bool(
+            topology["quantize_hardswish_input"]
+        ):
+            raise ValueError("calibration sidecar pre-HardSwish policy mismatch")
+        if calibration.get("activation_rounding", ROUNDING_MODE) != topology[
+            "activation_rounding"
+        ]:
+            raise ValueError("calibration sidecar activation rounding mismatch")
         declared_scales = calibration.get("final_effective_quantizers")
         actual_scales = _model_effective_quantizer_scales(model)
         if declared_scales != actual_scales:
@@ -884,6 +1045,16 @@ def _read_and_validate_qat_sidecars(
             "dilations": list(topology["dilations"]),
             "activation": "hardswish",
         }
+        if topology["quantize_hardswish_input"] or (
+            "quantize_hardswish_input" in model_spec
+            or "activation_rounding" in model_spec
+        ):
+            expected.update({
+                "quantize_hardswish_input": bool(
+                    topology["quantize_hardswish_input"]
+                ),
+                "activation_rounding": topology["activation_rounding"],
+            })
         for name, value in expected.items():
             if model_spec.get(name) != value:
                 raise ValueError(f"model-spec sidecar {name} mismatch")
@@ -959,7 +1130,11 @@ def _export_fexlite_qat_rtl_into(
         raise ValueError("golden input selection is empty")
 
     input_codes = quantize_codes(
-        input_float, input_quantizer["scale"], input_quantizer["qmin"], input_quantizer["qmax"]
+        input_float,
+        input_quantizer["scale"],
+        input_quantizer["qmin"],
+        input_quantizer["qmax"],
+        input_quantizer["rounding"],
     )
     integer_traces = run_integer_reference(
         input_codes, runtime_layers, input_quantizer, output_quantizer
@@ -1055,6 +1230,11 @@ def _export_fexlite_qat_rtl_into(
             "dilation_base": int(topology["dilation_base"]),
             "dilations": list(topology["dilations"]),
             "activation": "hardswish after input projection and each depthwise layer",
+            "hardswish_input_quantization": (
+                f"signed A{activation_bits} before every HardSwish"
+                if topology["quantize_hardswish_input"] else
+                "wide accumulator input (legacy)"
+            ),
             "output_residual": "quantized correction + quantized raw I/Q, then output requantization",
             "receptive_field_samples": receptive_field,
             "mac_per_sample": total_weights,
@@ -1067,10 +1247,18 @@ def _export_fexlite_qat_rtl_into(
             "numeric_contract": {
                 "integer_encoding": "signed two_complement unless signed=false",
                 "rounding": ROUNDING_MODE,
+                "activation_boundary_rounding": topology["activation_rounding"],
                 "fex": "exact integer powers/products followed by layer-0 activation requantization",
                 "bias": "round FP32 QAT bias to input_scale*weight_scale",
                 "mac": "full-precision signed integer accumulation without intermediate saturation",
-                "hardswish": "exact x*clamp(x+3,0,6)/6 rational evaluation followed by next-layer requantization",
+                "hardswish": (
+                    "explicit signed activation-width pre-quantization, exact "
+                    "x*clamp(x+3,0,6)/6 rational evaluation, then next-layer "
+                    "requantization"
+                    if topology["quantize_hardswish_input"] else
+                    "exact x*clamp(x+3,0,6)/6 rational evaluation followed "
+                    "by next-layer requantization"
+                ),
                 "residual": "align correction and raw-I/Q power-of-two scales, add once, then output requantize",
                 "saturation": (
                     f"only at explicit {activation_bits}-bit activation/output quantizers"

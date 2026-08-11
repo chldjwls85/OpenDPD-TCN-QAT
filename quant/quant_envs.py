@@ -5,9 +5,12 @@ import copy
 from .modules.gru import GRU as PYGRU
 from .modules.ops import Mul, Add, Sqrt, Pow
 from .qmodules.quantizers import (
+    DISCARD_LSB_SIGNED_FLOOR,
+    ROUND_TO_NEAREST_TIES_TO_EVEN,
     Identity_Quantizer, INT_Quantizer, OP_INT_Quantizer
     )
 from .qmodules.quant_layers import INT_Conv1D, INT_Conv2D, INT_Linear, INT_Pass
+from .qmodules.quant_activations import INT_Hardswish
 from .qmodules.quant_ops import Quant_sigmoid, Quant_tanh, Quant_mult, Quant_add, Quant_sqrt, Quant_pow
 
 # Modified in the OpenDPD-TCN-QAT fork to add a dedicated Conv1d QAT path.
@@ -114,6 +117,16 @@ def recur_rpls_layers(args, model, layer_type=nn.Conv2d,
         else:
             recur_rpls_layers(args, module, layer_type, rpls_layer_type, weight_quantizer, act_quantizer)
 
+
+def recur_rpls_hardswish(model, bits, rounding):
+    """Replace every hardware-path HardSwish with an input-quantized module."""
+
+    for name, module in model.named_children():
+        if isinstance(module, nn.Hardswish):
+            setattr(model, name, INT_Hardswish(bits=bits, rounding=rounding))
+        else:
+            recur_rpls_hardswish(module, bits, rounding)
+
 def create_op_quantizer(type, n_bits, all_positive):
     quantizer_types = ['OP_INT_Quantizer', 'Identity_Quantizer', 'Drf_Act_Quantizer', 'IAO_Quantizer', 'FP8_Quantizer']
     assert type in quantizer_types, 'Quantizer type {} is not supported.'.format(type)
@@ -192,6 +205,19 @@ class FExLiteTCNQuantEnv:
         self.model = copy.deepcopy(model)
         self.n_bits_w = int(args.n_bits_w)
         self.n_bits_a = int(args.n_bits_a)
+        self.quantize_hardswish_input = bool(
+            getattr(args, "quantize_hardswish_input", False)
+        )
+        self.activation_rounding = getattr(
+            args, "activation_rounding", ROUND_TO_NEAREST_TIES_TO_EVEN
+        )
+        if self.activation_rounding not in {
+            ROUND_TO_NEAREST_TIES_TO_EVEN,
+            DISCARD_LSB_SIGNED_FLOOR,
+        }:
+            raise ValueError(
+                f"unsupported TCN activation rounding: {self.activation_rounding}"
+            )
         if self.n_bits_w < 2 or self.n_bits_a < 2:
             raise ValueError("signed TCN QAT requires activation and weight bits >= 2")
         if getattr(args, "pretrained_model", ""):
@@ -217,6 +243,36 @@ class FExLiteTCNQuantEnv:
             INT_Quantizer(self.n_bits_w, all_positive=False),
             INT_Quantizer(self.n_bits_a, all_positive=False),
         )
+        conv_layers = [
+            module for module in quantized.modules()
+            if isinstance(module, INT_Conv1D)
+        ]
+        # Conv0 consumes FEx output and keeps the existing RNE contract.  Every
+        # later convolution consumes a post-HardSwish activation, so its input
+        # fake quantizer is the explicit post-activation boundary.
+        for layer in conv_layers[1:]:
+            layer.act_quantizer.rounding = self.activation_rounding
+
+        if self.quantize_hardswish_input:
+            recur_rpls_hardswish(
+                quantized, self.n_bits_a, self.activation_rounding
+            )
+
+        if (
+            self.quantize_hardswish_input
+            or self.activation_rounding != ROUND_TO_NEAREST_TIES_TO_EVEN
+        ):
+            rounding_code = (
+                1 if self.activation_rounding == DISCARD_LSB_SIGNED_FLOOR else 0
+            )
+            quantized.backbone.register_buffer(
+                "_activation_quant_spec",
+                torch.tensor(
+                    [1, int(self.quantize_hardswish_input), rounding_code,
+                     self.n_bits_a],
+                    dtype=torch.int64,
+                ),
+            )
         self.q_model = InputOutputQuantWrapper(quantized, self.n_bits_a)
 
     @staticmethod
@@ -236,10 +292,22 @@ class FExLiteTCNQuantEnv:
         if max_batches < 1:
             raise ValueError("quant_calibration_batches must be positive")
 
-        layers = [
-            module for module in self.q_model.modules()
-            if isinstance(module, INT_Conv1D)
-        ]
+        calibration_points = []
+        conv_index = 0
+        hardswish_index = 0
+        for module in self.q_model.modules():
+            if isinstance(module, INT_Conv1D):
+                calibration_points.append((
+                    f"conv{conv_index}_input", module.act_quantizer, False
+                ))
+                conv_index += 1
+            elif isinstance(module, INT_Hardswish):
+                calibration_points.append((
+                    f"hardswish{hardswish_index}_input",
+                    module.input_quantizer,
+                    True,
+                ))
+                hardswish_index += 1
         calibration_batches = []
         for batch_index, (features, _) in enumerate(loader):
             if batch_index >= max_batches:
@@ -262,7 +330,7 @@ class FExLiteTCNQuantEnv:
             },
         }
         try:
-            for index, layer in enumerate(layers):
+            for label, quantizer, must_represent_threshold in calibration_points:
                 clip = torch.zeros((), device=device)
 
                 def capture(_module, inputs):
@@ -270,20 +338,27 @@ class FExLiteTCNQuantEnv:
                     values = inputs[0].detach().abs().flatten()
                     clip = torch.maximum(clip, torch.quantile(values, quantile))
 
-                handle = layer.act_quantizer.register_forward_pre_hook(capture)
+                handle = quantizer.register_forward_pre_hook(capture)
                 try:
                     for features in calibration_batches:
                         self.q_model(features.to(device))
                 finally:
                     handle.remove()
-                scale = self._covering_power_of_two_scale(
-                    clip, layer.act_quantizer.Qp
+                design_clip = torch.maximum(
+                    clip,
+                    clip.new_tensor(3.0) if must_represent_threshold
+                    else clip.new_tensor(0.0),
                 )
-                layer.act_quantizer.scale.copy_(scale)
-                result[f"conv{index}_input"] = {
+                scale = self._covering_power_of_two_scale(
+                    design_clip, quantizer.Qp
+                )
+                quantizer.scale.copy_(scale)
+                result[label] = {
                     "clip": float(clip.cpu()),
+                    "design_clip": float(design_clip.cpu()),
                     "scale": float(scale.cpu()),
                     "bits": self.n_bits_a,
+                    "rounding": quantizer.rounding,
                     "quantile": quantile,
                     "batches": len(calibration_batches),
                 }
