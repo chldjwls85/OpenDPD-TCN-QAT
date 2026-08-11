@@ -11,7 +11,9 @@ from steps import train_pa, train_dpd, run_dpd
 from steps import plot as plot_step
 from project import Project
 
-if __name__ == '__main__':
+
+def main():
+    """Run the selected OpenDPD step from parsed command-line arguments."""
     proj = Project()
 
     # PA Modeling
@@ -43,3 +45,7 @@ if __name__ == '__main__':
         plot_step.main(proj)
     else:
         raise ValueError(f"The step '{proj.step}' is not supported.")
+
+
+if __name__ == '__main__':
+    main()

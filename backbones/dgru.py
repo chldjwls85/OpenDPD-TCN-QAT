@@ -1,6 +1,7 @@
 __author__ = "Yizhuo Wu, Chang Gao"
 __license__ = "Apache-2.0 License"
 __email__ = "yizhuo.wu@tudelft.nl, chang.gao@tudelft.nl"
+# Modified in the OpenDPD-TCN-QAT fork to define PA features at exact zero.
 
 import torch
 from torch import nn
@@ -61,10 +62,15 @@ class DGRU(nn.Module):
         i_x = torch.unsqueeze(x[..., 0], dim=-1)
         q_x = torch.unsqueeze(x[..., 1], dim=-1)
         amp2 = torch.pow(i_x, 2) + torch.pow(q_x, 2)
-        amp = torch.sqrt(amp2)
+        nonzero = amp2 > 0
+        amp = torch.where(
+            nonzero,
+            torch.sqrt(amp2.clamp_min(1e-24)),
+            torch.zeros_like(amp2),
+        )
         amp3 = torch.pow(amp, 3)
-        cos = i_x / amp
-        sin = q_x / amp
+        cos = torch.where(nonzero, i_x / amp.clamp_min(1e-12), 0.0)
+        sin = torch.where(nonzero, q_x / amp.clamp_min(1e-12), 0.0)
         x = torch.cat((i_x, q_x, amp, amp3, sin, cos), dim=-1)
         # Regressor
         out, _ = self.rnn(x, h_0)

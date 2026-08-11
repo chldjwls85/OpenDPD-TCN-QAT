@@ -5,6 +5,7 @@ __email__ = "yizhuo.wu@tudelft.nl, chang.gao@tudelft.nl"
 import models as model
 from project import Project
 from utils.util import count_net_params
+from steps.training_artifacts import publish_checkpoint
 
 
 def main(proj: Project):
@@ -95,3 +96,9 @@ def main(proj: Project):
                metadata=metadata,
                full_input_iq=full_input_iq,
                full_output_iq=full_output_iq)
+
+    published = publish_checkpoint(
+        proj, getattr(proj, 'pa_output_checkpoint', ''), 'PA'
+    )
+    proj.published_pa_checkpoint = str(published)
+    print("::: Published PA Checkpoint: ", published)

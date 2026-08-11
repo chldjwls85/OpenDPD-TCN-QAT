@@ -21,8 +21,10 @@ wheels/
 *.egg
 build/
 plots/
-datasets/MATLAB
-docs/
+docs/_build/
+results/
+reports/
+flow_runs/
 
 # Virtual environments
 venv/
@@ -54,6 +56,13 @@ datasets/**/data/*.npy
 datasets/**/data/*.npz
 datasets/**/data/*.mat
 !datasets/**/data/sample*
+
+# Regenerable dataset diagnostic plots
+datasets/**/waveform.png
+datasets/**/psd.png
+datasets/**/constellation.png
+datasets/**/amam.png
+datasets/**/ampm.png
 
 # IDE specific files
 .idea/
@@ -88,7 +97,7 @@ wandb/
 *.tmp
 
 # Keep empty directories
-!*/.gitkeep 
+!*/.gitkeep
 
 steps/__pycache__/
 

@@ -1,5 +1,12 @@
 ![OpenDPD](pics/OpenDPDlogo_new.png)
 
+> **OpenDPD-TCN-QAT fork:** the `tcn-qat` branch adds the causal FExLite TCN,
+> fail-closed QAT, integer RTL export, and frozen-PA verification used by
+> [DPD-Flow](https://github.com/chldjwls85/DPD-Flow). See the
+> [TCN-QAT workflow](docs/TCN_QAT_WORKFLOW.md) and
+> [upstream provenance](docs/UPSTREAM_AND_LICENSE.md). The upstream OpenDPD
+> documentation below is intentionally retained to minimize fork drift.
+
 
 
 **OpenDPD** is an end-to-end learning framework built in PyTorch for modeling power amplifiers (PA) and digital pre-distortion. Developed by the [Lab of Efficient Machine Intelligence](https://www.tudemi.com) @ Delft University of Technology, OpenDPD now ships as both a pip-installable package and a full research codebase.

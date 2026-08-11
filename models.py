@@ -1,6 +1,7 @@
 __author__ = "Yizhuo Wu, Chang Gao"
 __license__ = "Apache-2.0 License"
 __email__ = "yizhuo.wu@tudelft.nl, chang.gao@tudelft.nl"
+# Modified in the OpenDPD-TCN-QAT fork to register the causal FExLite TCN.
 
 import torch
 import torch.nn as nn
@@ -8,7 +9,7 @@ from backbones.rvtdcnn import RVTDCNN
 
 
 class CoreModel(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, backbone_type, window_size=None, num_dvr_units=None, thx=0, thh=0):
+    def __init__(self, input_size, hidden_size, num_layers, backbone_type, window_size=None, num_dvr_units=None, thx=0, thh=0, tcn_kernel_size=5, tcn_dilation_base=2):
         super(CoreModel, self).__init__()
         self.output_size = 2  # PA outputs: I & Q
         self.input_size = input_size
@@ -96,7 +97,7 @@ class CoreModel(nn.Module):
                                      num_layers=self.num_layers,
                                      thx=self.thx,
                                      thh=self.thh,
-                                     bias=self.bias)  
+                                     bias=self.bias)
         elif backbone_type == 'deltajanet':
             from backbones.deltajanet import DeltaJANET
             self.backbone = DeltaJANET(input_size=6,
@@ -130,6 +131,14 @@ class CoreModel(nn.Module):
         elif backbone_type == 'tcn':
             from backbones.tcn import TCN
             self.backbone = TCN(hidden_channels=self.hidden_size)
+        elif backbone_type == 'fexlite_causal_tcn':
+            from backbones.fexlite_causal_tcn import FExLiteCausalTCN
+            self.backbone = FExLiteCausalTCN(
+                hidden_channels=self.hidden_size,
+                num_layers=self.num_layers,
+                kernel_size=tcn_kernel_size,
+                dilation_base=tcn_dilation_base,
+            )
         elif backbone_type == 'neuraltx':
             from backbones.neuraltx import NeuralTX
             self.backbone = NeuralTX(hidden_channels=self.hidden_size)

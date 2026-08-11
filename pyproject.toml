@@ -3,11 +3,11 @@ requires = ["setuptools>=45", "wheel", "setuptools_scm>=6.2"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "opendpd"
-version = "2.0.0"
-description = "An end-to-end learning framework for modeling power amplifiers and digital pre-distortion"
+name = "opendpd-tcn-qat"
+version = "2.1.0"
+description = "OpenDPD fork with native full-I/O causal-TCN QAT and portable RTL export"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "Chang Gao", email = "chang.gao@tudelft.nl"},
@@ -49,10 +49,17 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/OpenDPD"
-Documentation = "https://github.com/yourusername/OpenDPD/blob/main/README.md"
-Repository = "https://github.com/yourusername/OpenDPD"
-Issues = "https://github.com/yourusername/OpenDPD/issues"
+Homepage = "https://github.com/chldjwls85/OpenDPD-TCN-QAT"
+Documentation = "https://github.com/chldjwls85/OpenDPD-TCN-QAT/blob/tcn-qat/docs/TCN_QAT_WORKFLOW.md"
+Repository = "https://github.com/chldjwls85/OpenDPD-TCN-QAT"
+Issues = "https://github.com/chldjwls85/OpenDPD-TCN-QAT/issues"
+Upstream = "https://github.com/lab-emi/OpenDPD"
+
+[project.scripts]
+opendpd-cli = "opendpd.cli:main"
+opendpd-rtl-export = "quant.rtl_cli:export_main"
+opendpd-rtl-verify = "quant.rtl_cli:verify_main"
+opendpd-rtl-evaluate = "scripts.evaluate_fexlite_integer_pa:main"
 
 [tool.setuptools]
 py-modules = ["arguments", "project", "models", "main"]
@@ -76,5 +83,5 @@ include = [
 ]
 
 [tool.setuptools.package-data]
-datasets = ["*/spec.json", "*/*.csv"]
-
+datasets = ["*/spec.json", "*/*.csv", "*/*.py"]
+quant = ["schemas/*.json"]

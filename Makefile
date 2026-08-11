@@ -3,7 +3,7 @@
 .PHONY: help install uninstall clean clean-data clean-logs clean-models clean-all
 
 INSTALL_CMD ?= pip install -e .
-UNINSTALL_CMD ?= pip uninstall -y opendpd
+UNINSTALL_CMD ?= pip uninstall -y opendpd-tcn-qat
 
 help:
 	@echo "OpenDPD Make Targets:"

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/opendpd/fexlite_qat_rtl_v1.schema.json",
+  "title": "OpenDPD FExLite QAT RTL export v1",
+  "type": "object",
+  "required": ["format", "format_version", "provenance", "model", "quantization", "golden_vectors"],
+  "properties": {
+    "format": {"const": "opendpd_fexlite_qat_rtl_export"},
+    "format_version": {"const": 1},
+    "model": {
+      "type": "object",
+      "required": ["backbone", "hidden_channels", "temporal_layers", "kernel_size", "dilations", "layers", "mac_per_sample"],
+      "properties": {
+        "backbone": {"const": "fexlite_causal_tcn"},
+        "hidden_channels": {"type": "integer", "minimum": 1},
+        "temporal_layers": {"type": "integer", "minimum": 1},
+        "kernel_size": {"type": "integer", "minimum": 1},
+        "dilations": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}},
+        "layers": {"type": "array", "minItems": 3},
+        "mac_per_sample": {"type": "integer", "minimum": 1}
+      }
+    },
+    "quantization": {
+      "type": "object",
+      "required": ["raw_input", "dpd_output", "numeric_contract"]
+    },
+    "golden_vectors": {
+      "type": "object",
+      "required": ["length", "files", "acceptance_for_rtl"]
+    }
+  }
+}

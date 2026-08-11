@@ -4,9 +4,9 @@
 include README.md
 include LICENSE
 
-# Include dataset specifications and CSV files
+# Include complete dataset packages: measurements, metadata, and local helpers
 recursive-include opendpd/datasets *.json *.csv
-recursive-include datasets *.json *.csv
+recursive-include datasets *.json *.csv *.py
 recursive-include backbones *
 
 # Include backbone configurations
@@ -26,4 +26,3 @@ recursive-exclude save *
 recursive-exclude log *
 recursive-exclude dpd_out *
 exclude *.sh
-

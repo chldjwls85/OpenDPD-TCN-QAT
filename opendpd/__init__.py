@@ -1,5 +1,5 @@
 """
-OpenDPD - An Open-Source End-to-End Learning Framework for 
+OpenDPD - An Open-Source End-to-End Learning Framework for
 Wideband Power Amplifier Modeling and Digital Pre-Distortion
 
 Project Lead: Chang Gao
@@ -8,7 +8,7 @@ Lab of Efficient Machine Intelligence @ Delft University of Technology
 Website: https://www.tudemi.com
 """
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 __author__ = "Yizhuo Wu, Ang Li, Chang Gao"
 __license__ = "Apache-2.0"
 __email__ = "chang.gao@tudelft.nl"
@@ -29,4 +29,3 @@ __all__ = [
     'create_dataset',
     'OpenDPDTrainer',
 ]
-

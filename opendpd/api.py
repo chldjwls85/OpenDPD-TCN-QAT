@@ -25,6 +25,17 @@ from steps import plot as plot_module
 from arguments import get_arguments
 
 
+def _append_keyword_arguments(argv, kwargs):
+    """Serialize Python keyword options using argparse flag semantics."""
+    for key, value in kwargs.items():
+        flag = f'--{key}'
+        if isinstance(value, bool):
+            if value:
+                argv.append(flag)
+        elif value is not None:
+            argv.extend([flag, str(value)])
+
+
 def train_pa(
     dataset_name: Optional[str] = None,
     dataset_path: Optional[str] = None,
@@ -72,7 +83,7 @@ def train_pa(
     # Prepare arguments
     sys.argv = ['opendpd']
     sys.argv.extend(['--step', 'train_pa'])
-    
+
     if dataset_path:
         raise ValueError(
             "train_pa no longer accepts dataset_path. Please create an OpenDPD "
@@ -84,7 +95,7 @@ def train_pa(
     else:
         raise ValueError("train_pa requires dataset_name."
                          " Create a dataset first with create_dataset().")
-    
+
     sys.argv.extend(['--PA_backbone', PA_backbone])
     sys.argv.extend(['--PA_hidden_size', str(PA_hidden_size)])
     sys.argv.extend(['--n_epochs', str(n_epochs)])
@@ -98,8 +109,7 @@ def train_pa(
     sys.argv.extend(['--plot_every', str(plot_every)])
 
     # Add any additional keyword arguments
-    for key, value in kwargs.items():
-        sys.argv.extend([f'--{key}', str(value)])
+    _append_keyword_arguments(sys.argv, kwargs)
 
     # Create project and run training
     proj = Project()
@@ -107,7 +117,7 @@ def train_pa(
 
     return {
         'status': 'completed',
-        'model_path': proj.path_save_file_best,
+        'model_path': getattr(proj, 'published_pa_checkpoint', proj.path_save_file_best),
         'log_path': proj.path_log_file_best,
     }
 
@@ -163,7 +173,7 @@ def train_dpd(
     # Prepare arguments
     sys.argv = ['opendpd']
     sys.argv.extend(['--step', 'train_dpd'])
-    
+
     if dataset_path:
         raise ValueError(
             "train_dpd no longer accepts dataset_path. Please create an OpenDPD "
@@ -175,7 +185,7 @@ def train_dpd(
     else:
         raise ValueError("train_dpd requires dataset_name."
                          " Create a dataset first with create_dataset().")
-    
+
     sys.argv.extend(['--DPD_backbone', DPD_backbone])
     sys.argv.extend(['--DPD_hidden_size', str(DPD_hidden_size)])
     sys.argv.extend(['--PA_backbone', PA_backbone])
@@ -193,8 +203,7 @@ def train_dpd(
     sys.argv.extend(['--plot_every', str(plot_every)])
 
     # Add any additional keyword arguments
-    for key, value in kwargs.items():
-        sys.argv.extend([f'--{key}', str(value)])
+    _append_keyword_arguments(sys.argv, kwargs)
 
     # Create project and run training
     proj = Project()
@@ -202,7 +211,11 @@ def train_dpd(
 
     return {
         'status': 'completed',
-        'model_path': proj.path_save_file_best,
+        'model_path': getattr(
+            proj,
+            'published_qat_checkpoint',
+            getattr(proj, 'published_dpd_checkpoint', proj.path_save_file_best),
+        ),
         'log_path': proj.path_log_file_best,
     }
 
@@ -258,8 +271,7 @@ def run_dpd(
         sys.argv.append('--plot')
 
     # Add any additional keyword arguments
-    for key, value in kwargs.items():
-        sys.argv.extend([f'--{key}', str(value)])
+    _append_keyword_arguments(sys.argv, kwargs)
 
     # Create project and run DPD
     proj = Project()
@@ -318,8 +330,7 @@ def plot_dpd(
     sys.argv.extend(['--DPD_hidden_size', str(DPD_hidden_size)])
     sys.argv.extend(['--accelerator', accelerator])
 
-    for key, value in kwargs.items():
-        sys.argv.extend([f'--{key}', str(value)])
+    _append_keyword_arguments(sys.argv, kwargs)
 
     proj = Project()
     plot_module.main(proj)
@@ -333,23 +344,23 @@ def plot_dpd(
 def load_dataset(dataset_path: str) -> Dict[str, Any]:
     """
     Load a dataset from a CSV file or directory.
-    
+
     This function supports both formats:
     1. Split CSV files (train_input.csv, train_output.csv, etc.)
     2. Single CSV file with all data (I_in, Q_in, I_out, Q_out columns)
-    
+
     Args:
         dataset_path: Path to the dataset directory or single CSV file
-        
+
     Returns:
         Dictionary containing loaded data arrays
-        
+
     Examples:
         >>> import opendpd
         >>> data = opendpd.load_dataset('datasets/DPA_200MHz')
         >>> print(data.keys())
         dict_keys(['X_train', 'y_train', 'X_val', 'y_val', 'X_test', 'y_test'])
-        
+
         >>> # Load from single CSV
         >>> data = opendpd.load_dataset('my_data.csv')
     """
@@ -370,9 +381,9 @@ def load_dataset(dataset_path: str) -> Dict[str, Any]:
         data_arrays = load_data(dataset_path=str(path))
     else:
         raise ValueError(f"Dataset path not found: {dataset_path}")
-    
+
     X_train, y_train, X_val, y_val, X_test, y_test = data_arrays
-    
+
     return {
         'X_train': X_train,
         'y_train': y_train,
@@ -396,9 +407,9 @@ def create_dataset(
 ) -> str:
     """
     Create a dataset in OpenDPD format from a single CSV file.
-    
+
     The input CSV should have 4 columns: I_in, Q_in, I_out, Q_out
-    
+
     Args:
         csv_path: Path to the input CSV file
         output_dir: Directory where the dataset will be created
@@ -410,10 +421,10 @@ def create_dataset(
             generate the classic six-file layout
         csv_filename: Optional filename for the generated single CSV (defaults to `data.csv`)
         **spec_kwargs: Additional fields for spec.json (e.g., input_signal_fs, bw_main_ch)
-        
+
     Returns:
         Path to the created dataset directory
-        
+
     Examples:
         >>> import opendpd
         >>> dataset_path = opendpd.create_dataset(
@@ -504,10 +515,10 @@ def create_dataset(
 class OpenDPDTrainer:
     """
     Advanced trainer class for OpenDPD with more control over the training process.
-    
+
     This class provides a more object-oriented interface for advanced users who need
     fine-grained control over the training process.
-    
+
     Examples:
         >>> import opendpd
         >>> trainer = opendpd.OpenDPDTrainer(dataset_name='DPA_200MHz')
@@ -515,11 +526,11 @@ class OpenDPDTrainer:
         >>> trainer.train_dpd(n_epochs=50)
         >>> trainer.evaluate()
     """
-    
+
     def __init__(self, dataset_name: Optional[str] = None, dataset_path: Optional[str] = None, **kwargs):
         """
         Initialize the OpenDPD trainer.
-        
+
         Args:
             dataset_name: Name of the dataset
             dataset_path: Path to custom dataset
@@ -530,7 +541,7 @@ class OpenDPDTrainer:
         self.config = kwargs
         self.pa_trained = False
         self.dpd_trained = False
-        
+
     def train_pa(self, **kwargs):
         """Train PA model"""
         config = {**self.config, **kwargs}
@@ -538,37 +549,36 @@ class OpenDPDTrainer:
             config['dataset_name'] = self.dataset_name
         elif self.dataset_path:
             config['dataset_path'] = self.dataset_path
-        
+
         result = train_pa(**config)
         self.pa_trained = True
         return result
-        
+
     def train_dpd(self, **kwargs):
         """Train DPD model"""
         if not self.pa_trained:
             print("Warning: PA model not trained yet. Training PA model first...")
             self.train_pa()
-        
+
         config = {**self.config, **kwargs}
         if self.dataset_name:
             config['dataset_name'] = self.dataset_name
         elif self.dataset_path:
             config['dataset_path'] = self.dataset_path
-        
+
         result = train_dpd(**config)
         self.dpd_trained = True
         return result
-        
+
     def run(self, **kwargs):
         """Run DPD model"""
         if not self.dpd_trained:
             raise RuntimeError("DPD model not trained yet. Call train_dpd() first.")
-        
+
         config = {**self.config, **kwargs}
         if self.dataset_name:
             config['dataset_name'] = self.dataset_name
         elif self.dataset_path:
             config['dataset_path'] = self.dataset_path
-        
-        return run_dpd(**config)
 
+        return run_dpd(**config)

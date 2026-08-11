@@ -1,0 +1,30 @@
+name: OpenDPD-TCN-QAT CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  frontend-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install package
+        run: python3 -m pip install --upgrade pip && python3 -m pip install .
+      - name: Run frontend contracts
+        run: |
+          python3 tests/test_fexlite_tcn_qat.py
+          python3 tests/test_fexlite_qat_rtl_export.py
+          python3 tests/test_dgru_zero_input.py
+          python3 tests/test_rtl_evaluate.py
+          python3 tests/test_api_arguments.py
+          python3 -m unittest tests.test_training_artifacts -v
+          python3 tests/test_model_id.py
+          python3 -m unittest tests.test_dataset_bundle -v
+      - name: Build wheel
+        run: python3 -m pip wheel --no-deps --wheel-dir dist .

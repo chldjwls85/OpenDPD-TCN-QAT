@@ -13,14 +13,14 @@ def read_long_description():
     return ""
 
 setup(
-    name='opendpd',
-    version='2.0.0',
+    name='opendpd-tcn-qat',
+    version='2.1.0',
     author='Chang Gao, Yizhuo Wu, Ang Li',
     author_email='chang.gao@tudelft.nl, yizhuo.wu@tudelft.nl, a.li-2@tudelft.nl',
-    description='An end-to-end learning framework for modeling power amplifiers and digital pre-distortion',
+    description='OpenDPD fork with native full-I/O causal-TCN QAT and portable RTL export',
     long_description=read_long_description(),
     long_description_content_type='text/markdown',
-    url='https://github.com/yourusername/OpenDPD',  # Update with actual URL
+    url='https://github.com/chldjwls85/OpenDPD-TCN-QAT',
     packages=find_packages(exclude=['Matlab', 'pics', 'slprj']),
     classifiers=[
         'Development Status :: 4 - Beta',
@@ -35,7 +35,7 @@ setup(
         'Programming Language :: Python :: 3.13',
         'Topic :: Scientific/Engineering :: Artificial Intelligence',
     ],
-    python_requires='>=3.8',
+    python_requires='>=3.10',
     install_requires=[
         'torch>=2.0.0',
         'numpy>=1.21.0',
@@ -55,12 +55,15 @@ setup(
     },
     include_package_data=True,
     package_data={
-        'opendpd': ['datasets/*/spec.json', 'datasets/*/*.csv'],
+        'datasets': ['*/spec.json', '*/*.csv', '*/*.py'],
+        'quant': ['schemas/*.json'],
     },
     entry_points={
         'console_scripts': [
             'opendpd-cli=opendpd.cli:main',
+            'opendpd-rtl-export=quant.rtl_cli:export_main',
+            'opendpd-rtl-verify=quant.rtl_cli:verify_main',
+            'opendpd-rtl-evaluate=scripts.evaluate_fexlite_integer_pa:main',
         ],
     },
 )
-

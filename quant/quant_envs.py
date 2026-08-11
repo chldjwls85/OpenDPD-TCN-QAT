@@ -7,8 +7,10 @@ from .modules.ops import Mul, Add, Sqrt, Pow
 from .qmodules.quantizers import (
     Identity_Quantizer, INT_Quantizer, OP_INT_Quantizer
     )
-from .qmodules.quant_layers import INT_Conv2D, INT_Linear, INT_Pass
+from .qmodules.quant_layers import INT_Conv1D, INT_Conv2D, INT_Linear, INT_Pass
 from .qmodules.quant_ops import Quant_sigmoid, Quant_tanh, Quant_mult, Quant_add, Quant_sqrt, Quant_pow
+
+# Modified in the OpenDPD-TCN-QAT fork to add a dedicated Conv1d QAT path.
 
 
 class AttrDict(dict):
@@ -22,12 +24,64 @@ class AttrDict(dict):
         self[key] = value
 
 
+class InputOutputQuantWrapper(nn.Module):
+    """Quantize raw and predistorted I/Q at the physical interface grid."""
+
+    def __init__(self, model, bits):
+        super().__init__()
+        if int(bits) < 2:
+            raise ValueError("full-I/O signed quantization requires at least 2 bits")
+        self.model = model
+        self.backbone_type = model.backbone_type
+        self.input_quantizer = INT_Quantizer(bits, all_positive=False)
+        self.output_quantizer = INT_Quantizer(bits, all_positive=False)
+        self.input_quantizer.init_act_params()
+        self.output_quantizer.init_act_params()
+        self._boundary_bits = int(bits)
+        boundary_scale = 2.0 ** (1 - self._boundary_bits)
+        for quantizer in (self.input_quantizer, self.output_quantizer):
+            # The physical ADC/DAC grid is an interface contract, not a learned
+            # QAT parameter.  Keeping it as a persistent buffer excludes it from
+            # every optimizer while preserving the checkpoint key.
+            quantizer._parameters.pop("scale")
+            quantizer.register_buffer(
+                "scale", torch.tensor([boundary_scale], dtype=torch.float32)
+            )
+        self.assert_physical_io_scales()
+
+    def assert_physical_io_scales(self):
+        """Require the exact signed-unit physical interface scale."""
+        expected = 2.0 ** (1 - self._boundary_bits)
+        for name, quantizer in (
+            ("raw_input", self.input_quantizer),
+            ("dpd_output", self.output_quantizer),
+        ):
+            value = float(quantizer.scale.detach().item())
+            if value != expected:
+                raise ValueError(
+                    f"{name} physical scale must be exactly 2^(1-A)="
+                    f"{expected}, got {value}"
+                )
+            if isinstance(quantizer.scale, torch.nn.Parameter):
+                raise TypeError(f"{name} physical scale must be a non-trainable buffer")
+        return expected
+
+    @property
+    def backbone(self):
+        return self.model.backbone
+
+    def forward(self, x, h_0=None):
+        quantized_input = self.input_quantizer(x)
+        output = self.model(quantized_input, h_0)
+        return self.output_quantizer(output)
+
+
 def create_quantizer(type, n_bits, all_positive, act_or_weight):
     quantizer_types = ['INT_Quantizer', 'Identity_Quantizer',
                        'Drf_Act_Quantizer', 'Drf_Weight_Quantizer',
-                       'IAO_Quantizer', 
-                       'FP8_Quantizer', 
-                       'PACT_Quantizer',                       
+                       'IAO_Quantizer',
+                       'FP8_Quantizer',
+                       'PACT_Quantizer',
                     ]
     assert type in quantizer_types, 'Quantizer type {} is not supported.'.format(type)
     if 'INT_Quantizer' in type:
@@ -82,8 +136,8 @@ def recur_rpls_ops(args, model, op_type, rpls_op_type, *quantizers):
     """
     sigmoid_quantizer, tanh_quantizer, mult_quantizer, add_quantizer, \
     sqrt_quantizer, pow_quantizer = quantizers
-    
-    for name, module in model.named_children():        
+
+    for name, module in model.named_children():
         if isinstance(module, op_type):
             # print('Replace {} with {}'.format(op_type, rpls_op_type))
             if isinstance(module, torch.nn.Sigmoid):
@@ -129,6 +183,114 @@ def recur_rpls_gru(model):
         else:
             recur_rpls_gru(module)
 
+
+class FExLiteTCNQuantEnv:
+    """Native full-I/O QAT environment for ``fexlite_causal_tcn``."""
+
+    def __init__(self, model, args):
+        self.args = args
+        self.model = copy.deepcopy(model)
+        self.n_bits_w = int(args.n_bits_w)
+        self.n_bits_a = int(args.n_bits_a)
+        if self.n_bits_w < 2 or self.n_bits_a < 2:
+            raise ValueError("signed TCN QAT requires activation and weight bits >= 2")
+        if getattr(args, "pretrained_model", ""):
+            state = torch.load(
+                args.pretrained_model, map_location="cpu", weights_only=True
+            )
+            incompatible = self.model.load_state_dict(state, strict=False)
+            allowed_missing = {"backbone._rtl_spec"}
+            unexpected_missing = set(incompatible.missing_keys) - allowed_missing
+            if unexpected_missing or incompatible.unexpected_keys:
+                raise RuntimeError(
+                    "pretrained TCN checkpoint is incompatible: "
+                    f"missing={sorted(unexpected_missing)}, "
+                    f"unexpected={sorted(incompatible.unexpected_keys)}"
+                )
+
+        quantized = copy.deepcopy(self.model)
+        recur_rpls_layers(
+            args,
+            quantized,
+            nn.Conv1d,
+            INT_Conv1D,
+            INT_Quantizer(self.n_bits_w, all_positive=False),
+            INT_Quantizer(self.n_bits_a, all_positive=False),
+        )
+        self.q_model = InputOutputQuantWrapper(quantized, self.n_bits_a)
+
+    @staticmethod
+    def _covering_power_of_two_scale(clip, qmax):
+        required = clip.clamp_min(1e-12) / qmax
+        return torch.pow(
+            required.new_tensor(2.0), torch.ceil(torch.log2(required))
+        )
+
+    @torch.no_grad()
+    def calibrate(self, loader, device):
+        """Calibrate each Conv1d input in graph order using training data only."""
+        quantile = float(self.args.quant_calibration_quantile)
+        max_batches = int(self.args.quant_calibration_batches)
+        if not 0.0 < quantile <= 1.0:
+            raise ValueError("quant_calibration_quantile must be in (0, 1]")
+        if max_batches < 1:
+            raise ValueError("quant_calibration_batches must be positive")
+
+        layers = [
+            module for module in self.q_model.modules()
+            if isinstance(module, INT_Conv1D)
+        ]
+        calibration_batches = []
+        for batch_index, (features, _) in enumerate(loader):
+            if batch_index >= max_batches:
+                break
+            calibration_batches.append(features.detach().cpu())
+        if not calibration_batches:
+            raise ValueError("calibration loader produced no batches")
+        was_training = self.q_model.training
+        self.q_model.eval()
+        result = {
+            "raw_input": {
+                "scale": float(self.q_model.input_quantizer.scale.item()),
+                "bits": self.n_bits_a,
+                "policy": "fixed_signed_unit_interface",
+            },
+            "dpd_output": {
+                "scale": float(self.q_model.output_quantizer.scale.item()),
+                "bits": self.n_bits_a,
+                "policy": "fixed_signed_unit_interface",
+            },
+        }
+        try:
+            for index, layer in enumerate(layers):
+                clip = torch.zeros((), device=device)
+
+                def capture(_module, inputs):
+                    nonlocal clip
+                    values = inputs[0].detach().abs().flatten()
+                    clip = torch.maximum(clip, torch.quantile(values, quantile))
+
+                handle = layer.act_quantizer.register_forward_pre_hook(capture)
+                try:
+                    for features in calibration_batches:
+                        self.q_model(features.to(device))
+                finally:
+                    handle.remove()
+                scale = self._covering_power_of_two_scale(
+                    clip, layer.act_quantizer.Qp
+                )
+                layer.act_quantizer.scale.copy_(scale)
+                result[f"conv{index}_input"] = {
+                    "clip": float(clip.cpu()),
+                    "scale": float(scale.cpu()),
+                    "bits": self.n_bits_a,
+                    "quantile": quantile,
+                    "batches": len(calibration_batches),
+                }
+        finally:
+            self.q_model.train(was_training)
+        return result
+
 class Base_GRUQuantEnv(object):
     """ Base class for quantization environment
     Args:
@@ -138,10 +300,10 @@ class Base_GRUQuantEnv(object):
     def __init__(self, model, args=AttrDict()):
         self.args = args
         self.model = model
-        
+
         self.n_bits_w = args.n_bits_w
         self.n_bits_a = args.n_bits_a
-        
+
         self.fq_layers_hash = {
             nn.Conv2d: INT_Conv2D,
             nn.Linear: INT_Linear,
@@ -166,21 +328,21 @@ class Base_GRUQuantEnv(object):
         # float model
         self.pygru_model = self.create_pygru_model(copy.deepcopy(self.model))
         self.pygru_model = self.load_model(self.pygru_model)
-        
+
         # quantized model
         self.q_model = self.create_quantized_model(copy.deepcopy(self.pygru_model))
-        
+
     def load_model(self, model):
         pretrained_model = self.args.pretrained_model
         use_pretrained = bool(pretrained_model)
-        
+
         if use_pretrained:
             model.load_state_dict(torch.load(pretrained_model))
             print("Load pretrained model from {}".format(pretrained_model))
         else:
             print("No pretrained model is loaded.")
         return model
-    
+
     def set_quantizer(self):
         print('INT Quantizers are used.')
         weight_quantizer = INT_Quantizer(self.n_bits_w, all_positive=False)
@@ -189,26 +351,26 @@ class Base_GRUQuantEnv(object):
         # act_quantizer = IAO_Quantizer(bits=self.n_bits_a, all_positive=False, act_or_weight='act')
         # weight_quantizer = Drf_Weight_Quantizer(bits=self.n_bits_w, all_positive=False)
         # act_quantizer = Drf_Act_Quantizer(bits=self.n_bits_a, all_positive=True)
-        
+
         # weight_quantizer = FP8_Quantizer(self.n_bits_w, all_positive=False)
         # act_quantizer = Identity_Quantizer(self.n_bits_a, all_positive=False)
-   
+
         sigmod_quantizer = OP_INT_Quantizer(self.n_bits_a, all_positive=False)
         tanh_quantizer = OP_INT_Quantizer(self.n_bits_a, all_positive=False)
         mult_quantizer = OP_INT_Quantizer(self.n_bits_a, all_positive=False)
         add_quantizer = OP_INT_Quantizer(self.n_bits_a, all_positive=False)
-        
+
 
         # sigmod_quantizer = Drf_Act_Quantizer(self.n_bits_a, all_positive=False)
         # tanh_quantizer = Drf_Act_Quantizer(self.n_bits_a, all_positive=False)
         # mult_quantizer = Drf_Act_Quantizer(self.n_bits_w, all_positive=False)
         # add_quantizer = Drf_Act_Quantizer(self.n_bits_w, all_positive=False)
         # sqrt_quantizer = OP_INT_Quantizer(bits=16, all_positive=False)
-        # pow_quantizer = OP_INT_Quantizer(bits=16, all_positive=False)   
+        # pow_quantizer = OP_INT_Quantizer(bits=16, all_positive=False)
         sqrt_quantizer = Identity_Quantizer(self.n_bits_w, all_positive=False)
         pow_quantizer = Identity_Quantizer(self.n_bits_w, all_positive=False)
-        
-        
+
+
         return weight_quantizer, act_quantizer, sigmod_quantizer, tanh_quantizer, mult_quantizer, add_quantizer, \
                sqrt_quantizer, pow_quantizer
 
@@ -238,13 +400,13 @@ class Base_GRUQuantEnv(object):
                     _reset_parameters(module, module.hidden_size)
                 else:
                     _reset_pygru(module)
-        
+
         # replace GRU module with pytorch GRU module
         recur_rpls_gru(model)
-        
+
         # reset parameters
         _reset_pygru(model)
- 
+
         return model
 
     def unquantize_last_layer(self, model, last_layer_name='fc_out'):
@@ -262,7 +424,7 @@ class Base_GRUQuantEnv(object):
                 module.act_quantizer = Identity_Quantizer()
             else:
                 self.unquantize_last_layer(module, last_layer_name)
-    
+
     def set_first_layer(self, model, first_layer_name='x2h'):
         """ Set the first layer attributes of the model.
         """
@@ -272,7 +434,7 @@ class Base_GRUQuantEnv(object):
                 module.act_quantizer.bits = 16
             else:
                 self.set_first_layer(module, first_layer_name)
-    
+
     def set_last_layer_quant(self, model, last_layer_name='fc_out'):
         """ Set the last layer attributes of the model.
         """
@@ -282,7 +444,7 @@ class Base_GRUQuantEnv(object):
                 module.out_quant = True
             else:
                 self.set_last_layer_quant(module, last_layer_name)
-                
+
     def create_quantized_model(self, model):
         """ Create a quantized model from the original model.
         Args:
@@ -295,12 +457,12 @@ class Base_GRUQuantEnv(object):
             recur_rpls_ops(self.args, model, op_type, rpls_op_type, \
                 self.sigmod_quantizer, self.tanh_quantizer, self.mult_quantizer, self.add_quantizer, \
                 self.sqrt_quantizer, self.pow_quantizer)
-        
+
         for layer_type, rpls_layer_type in self.fq_layers_hash.items():
             recur_rpls_layers(self.args, model, layer_type, rpls_layer_type, self.weight_quantizer, self.act_quantizer)
-        
+
         # self.set_first_layer(model)
         # self.unquantize_last_layer(model)
         self.set_last_layer_quant(model)
-        
+
         return model

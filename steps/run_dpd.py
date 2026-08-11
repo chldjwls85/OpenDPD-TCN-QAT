@@ -44,10 +44,12 @@ def main(proj: Project):
     net_dpd = model.CoreModel(input_size=2,  # I and Q
                               hidden_size=proj.DPD_hidden_size,
                               num_layers=proj.DPD_num_layers,
-                              backbone_type=proj.DPD_backbone)
+                              backbone_type=proj.DPD_backbone,
+                              tcn_kernel_size=proj.tcn_kernel_size,
+                              tcn_dilation_base=proj.tcn_dilation_base)
 
     net_dpd = get_quant_model(proj, net_dpd)
-    
+
     n_net_dpd_params = count_net_params(net_dpd)
     print("::: Number of DPD Model Parameters: ", n_net_dpd_params)
     dpd_model_id = proj.gen_dpd_model_id(n_net_dpd_params)
@@ -58,6 +60,15 @@ def main(proj: Project):
     if proj.args.quant:
         path_dpd_model = os.path.join('save', proj.dataset_name, 'train_dpd', pa_model_id.split('_P_')[0], proj.args.quant_dir_label, dpd_model_id + '.pt')
         print("::: Loading Quantized DPD Model: ", path_dpd_model)
+    if not os.path.isfile(path_dpd_model) and proj.DPD_backbone == 'fexlite_causal_tcn':
+        legacy_id = proj.gen_dpd_model_id(n_net_dpd_params, legacy=True)
+        legacy_parts = ['save', proj.dataset_name, 'train_dpd', pa_model_id.split('_P_')[0]]
+        if proj.args.quant:
+            legacy_parts.append(proj.args.quant_dir_label)
+        legacy_path = os.path.join(*legacy_parts, legacy_id + '.pt')
+        if os.path.isfile(legacy_path):
+            print("::: Loading legacy-named TCN checkpoint: ", legacy_path)
+            path_dpd_model = legacy_path
     net_dpd.load_state_dict(torch.load(path_dpd_model))
 
     # Get parameter count

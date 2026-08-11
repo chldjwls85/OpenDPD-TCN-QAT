@@ -1,6 +1,7 @@
 __author__ = "Yizhuo Wu, Chang Gao"
 __license__ = "Apache-2.0 License"
 __email__ = "yizhuo.wu@tudelft.nl, chang.gao@tudelft.nl"
+# Modified in the OpenDPD-TCN-QAT fork to add native causal-TCN QAT.
 
 import argparse
 
@@ -52,13 +53,22 @@ def get_arguments():
                         help='Hidden size of PA backbone')
     parser.add_argument('--PA_num_layers', default=1, type=int,
                         help="Number of layers of the PA backbone.")
+    parser.add_argument('--pa_checkpoint', '--PA_checkpoint', dest='pa_checkpoint',
+                        default='',
+                        help='Explicit pretrained PA checkpoint. The legacy save/ path is used when omitted.')
+    parser.add_argument('--pa_output_checkpoint', default='',
+                        help='Atomically publish the newly trained PA checkpoint to this explicit path.')
     # Digital Predistortion Model Settings
     parser.add_argument('--DPD_backbone', default='gru',
                         choices=['gmp', 'deltagru', 'deltajanet', 'janet', 'snn', 'fcn', 'gru', 'dgru', 'qgru', 'qgru_amp1', 'lstm', 'vdlstm',
-                                'rvtdcnn', 'tres_deltagru', 'tcn', 'pntdnn', 'pdgru', 'pgjanet', 'dvrjanet', 'bojanet', 'pnjanet', 'djanet', 'mcldnn'],
+                                'rvtdcnn', 'tres_deltagru', 'tcn', 'fexlite_causal_tcn', 'pntdnn', 'pdgru', 'pgjanet', 'dvrjanet', 'bojanet', 'pnjanet', 'djanet', 'mcldnn'],
                         help='DPD model Recurrent layer type')
     parser.add_argument('--DPD_hidden_size', default=15, type=int, help='Hidden size of DPD backbone.')
     parser.add_argument('--DPD_num_layers', default=1, type=int, help='Number of layers of the DPD backbone.')
+    parser.add_argument('--tcn_kernel_size', default=5, type=int,
+                        help='Kernel size of each FExLite causal depthwise TCN layer.')
+    parser.add_argument('--tcn_dilation_base', default=2, type=int,
+                        help='Dilation growth base: layer i uses base**i.')
 
 
     # quantization
@@ -66,7 +76,15 @@ def get_arguments():
     parser.add_argument('--n_bits_w', default=8, type=int, help='Number of bits for weights')
     parser.add_argument('--n_bits_a', default=8, type=int, help='Number of bits for activations')
     parser.add_argument('--pretrained_model', default='', help='Path to pretrained model')
+    parser.add_argument('--dpd_output_checkpoint', default='',
+                        help='Atomically publish a newly trained floating-point DPD checkpoint to this path.')
+    parser.add_argument('--qat_output_checkpoint', default='',
+                        help='Atomically publish the newly trained QAT checkpoint to this explicit path.')
     parser.add_argument('--quant_dir_label', default='', help='Directory label for quantization')
+    parser.add_argument('--quant_calibration_batches', default=32, type=int,
+                        help='Training batches used to calibrate TCN activation scales.')
+    parser.add_argument('--quant_calibration_quantile', default=0.9999, type=float,
+                        help='Absolute activation quantile used for power-of-two QAT scales.')
     parser.add_argument('--q_pretrain', default=False, type=bool, help='pretrain the model with \
                         self-implementation float models for quantization')
 

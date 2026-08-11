@@ -2,6 +2,8 @@ import torch
 import torch.nn.functional as F
 from .quantizers import INT_Quantizer
 
+# Modified in the OpenDPD-TCN-QAT fork to support Conv1d QAT.
+
 def calc_similarity(tensor1, tensor2):
     tensor1 = tensor1.flatten()
     tensor2 = tensor2.flatten()
@@ -28,21 +30,78 @@ class INT_Conv2D(torch.nn.Conv2d):
 
         self.act_quantizer = act_quantizer
         self.act_quantizer.init_act_params()
-            
-        # save the parameters 
+
+        # save the parameters
         self.register_buffer('n_bits_w', torch.Tensor([self.weight_quantizer.bits]))
         self.register_buffer('n_bits_a', torch.Tensor([self.act_quantizer.bits]))
-        
+
     def forward(self, x):
         quantized_weight = self.weight_quantizer(self.weight)
         # self.register_buffer('quantized_weight', quantized_weight)
-        
+
         quantized_act = self.act_quantizer(x)
         # self.register_buffer('quantized_act', quantized_act)
 
         # quantized_act = x
 
         return F.conv2d(quantized_act, quantized_weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+
+
+class INT_Conv1D(torch.nn.Conv1d):
+    """OpenDPD fake-quantized replacement for ``torch.nn.Conv1d``."""
+
+    def __init__(self, m, weight_quantizer=None, act_quantizer=None):
+        if weight_quantizer is None:
+            weight_quantizer = INT_Quantizer(bits=8, all_positive=False)
+        if act_quantizer is None:
+            act_quantizer = INT_Quantizer(bits=8, all_positive=False)
+        super().__init__(
+            in_channels=m.in_channels,
+            out_channels=m.out_channels,
+            kernel_size=m.kernel_size,
+            stride=m.stride,
+            padding=m.padding,
+            dilation=m.dilation,
+            groups=m.groups,
+            bias=m.bias is not None,
+            padding_mode=m.padding_mode,
+        )
+        self.weight = torch.nn.Parameter(m.weight.detach().clone())
+        if m.bias is not None:
+            self.bias = torch.nn.Parameter(m.bias.detach().clone())
+
+        self.weight_quantizer = weight_quantizer
+        self.weight_quantizer.init_step_size(m.weight)
+        with torch.no_grad():
+            required_scale = (
+                m.weight.detach().abs().max().clamp_min(1e-12)
+                / self.weight_quantizer.Qp
+            )
+            covering_scale = torch.pow(
+                required_scale.new_tensor(2.0),
+                torch.ceil(torch.log2(required_scale)),
+            )
+            self.weight_quantizer.scale.copy_(covering_scale)
+
+        self.act_quantizer = act_quantizer
+        self.act_quantizer.init_act_params()
+        self.register_buffer(
+            "n_bits_w", torch.tensor([self.weight_quantizer.bits])
+        )
+        self.register_buffer(
+            "n_bits_a", torch.tensor([self.act_quantizer.bits])
+        )
+
+    def forward(self, x):
+        return F.conv1d(
+            self.act_quantizer(x),
+            self.weight_quantizer(self.weight),
+            self.bias,
+            self.stride,
+            self.padding,
+            self.dilation,
+            self.groups,
+        )
 
 
 class INT_Linear(torch.nn.Linear):
@@ -52,22 +111,22 @@ class INT_Linear(torch.nn.Linear):
             out_features=m.out_features,
             bias=True if m.bias is not None else False)
 
-        self.weight = torch.nn.Parameter(m.weight.detach())        
+        self.weight = torch.nn.Parameter(m.weight.detach())
         self.weight_quantizer = weight_quantizer
         self.weight_quantizer.init_act_params()
         self.act_quantizer = act_quantizer
         self.act_quantizer.init_act_params()
-        
+
         self.out_quantizer = INT_Quantizer(bits=16, all_positive=False)
         self.out_quantizer.init_act_params()
-        
+
         self.out_quant = False
-        # save the parameters 
+        # save the parameters
         self.register_buffer('n_bits_w', torch.Tensor([self.weight_quantizer.bits]))
         self.register_buffer('n_bits_a', torch.Tensor([self.act_quantizer.bits]))
-        
 
-    def forward(self, x):    
+
+    def forward(self, x):
         quantized_weight = self.weight_quantizer(self.weight)
         # self.register_buffer('quantized_weight', quantized_weight)
 
@@ -80,7 +139,7 @@ class INT_Linear(torch.nn.Linear):
             out = q_out
 
         return out
-    
+
     def __repr__(self):
         return super().__repr__() + '(out_quant={})'.format(self.out_quant)
 
@@ -89,11 +148,9 @@ class INT_Pass(torch.nn.Module):
     """
     def __init__(self, act_quantizer=INT_Quantizer(bits=8, all_positive=False)):
         super(INT_Pass, self).__init__()
-        
+
         self.act_quantizer = act_quantizer
-        
+
     def forward(self, x):
         quantized_act = self.act_quantizer(x)
         return quantized_act
-            
-            

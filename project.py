@@ -71,13 +71,24 @@ class Project:
         pa_model_id = 'PA_' + pa_model_id
         return pa_model_id
 
-    def gen_dpd_model_id(self, n_net_params):
+    def gen_dpd_model_id(self, n_net_params, legacy: bool = False):
         dict_dpd = {'S': f"{self.seed}",
                     'M': self.DPD_backbone.upper(),
                     'H': f"{self.DPD_hidden_size:d}",
                     'F': f"{self.frame_length:d}",
-                    'P': f"{n_net_params:d}"
                     }
+        if self.DPD_backbone == 'fexlite_causal_tcn' and not legacy:
+            dict_dpd.update({
+                'L': f"{self.DPD_num_layers:d}",
+                'K': f"{self.tcn_kernel_size:d}",
+                'DB': f"{self.tcn_dilation_base:d}",
+            })
+            if self.quant:
+                dict_dpd.update({
+                    'A': f"{self.n_bits_a:d}",
+                    'W': f"{self.n_bits_w:d}",
+                })
+        dict_dpd['P'] = f"{n_net_params:d}"
         if 'delta' in self.DPD_backbone:
             dict_dpd['THX'] = f"{self.thx:.3f}"
             dict_dpd['THH'] = f"{self.thh:.3f}"
@@ -159,7 +170,7 @@ class Project:
         elif path_spec:
             # No spec file and no dataset_path - this shouldn't happen
             raise FileNotFoundError(f"spec.json not found for dataset: {self.dataset_name}")
-        
+
         if spec:
             for k, v in spec.items():
                 setattr(self, k, v)

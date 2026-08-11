@@ -3,9 +3,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from .quant_envs import AttrDict, Base_GRUQuantEnv
+from .quant_envs import AttrDict, Base_GRUQuantEnv, FExLiteTCNQuantEnv
 
-__all__ = ["get_quant_model", "AttrDict", "Base_GRUQuantEnv"]
+__all__ = [
+    "get_quant_model", "AttrDict", "Base_GRUQuantEnv", "FExLiteTCNQuantEnv"
+]
+
+# Modified in the OpenDPD-TCN-QAT fork to dispatch native TCN QAT.
 
 
 def _build_quant_args(proj: Any) -> AttrDict:
@@ -14,6 +18,13 @@ def _build_quant_args(proj: Any) -> AttrDict:
         "n_bits_a": getattr(proj, "n_bits_a", 8),
         "pretrained_model": getattr(proj, "pretrained_model", ""),
         "quant_dir_label": getattr(proj, "quant_dir_label", ""),
+        "dpd_backbone": getattr(proj, "DPD_backbone", ""),
+        "quant_calibration_batches": getattr(
+            proj, "quant_calibration_batches", 32
+        ),
+        "quant_calibration_quantile": getattr(
+            proj, "quant_calibration_quantile", 0.9999
+        ),
     })
 
 
@@ -29,9 +40,14 @@ def get_quant_model(proj: Any, model) -> Any:
 
     try:
         quant_args = _build_quant_args(proj)
-        env = Base_GRUQuantEnv(model, args=quant_args)
+        if quant_args.dpd_backbone == "fexlite_causal_tcn":
+            env = FExLiteTCNQuantEnv(model, args=quant_args)
+        else:
+            env = Base_GRUQuantEnv(model, args=quant_args)
         setattr(proj, "quant_env", env)
         return env.q_model
     except Exception as exc:  # pragma: no cover - protective fallback
+        if getattr(proj, "DPD_backbone", "") == "fexlite_causal_tcn":
+            raise RuntimeError("native FExLite TCN QAT setup failed") from exc
         print(f"[WARN] Quantization setup failed: {exc}. Using float model instead.")
         return model
