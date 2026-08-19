@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import sys
+import json
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -70,7 +72,35 @@ def test_train_dpd_api_emits_quant_and_explicit_artifact_flags():
     assert argv[argv.index("--qat_output_checkpoint") + 1] == "/artifacts/qat.pt"
 
 
+def test_create_dataset_writes_canonical_sample_rate_and_rejects_conflict():
+    import pandas as pd
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        csv_path = root / "samples.csv"
+        pd.DataFrame({
+            "I_in": [0.0, 0.1], "Q_in": [0.0, -0.1],
+            "I_out": [0.0, 0.2], "Q_out": [0.0, -0.2],
+        }).to_csv(csv_path, index=False)
+        dataset = Path(api.create_dataset(
+            str(csv_path), str(root), "unit", input_signal_fs=800e6,
+        ))
+        spec = json.loads((dataset / "spec.json").read_text())
+        assert spec["sample_rate_hz"] == 800e6
+        assert spec["input_signal_fs"] == 800e6
+        try:
+            api.create_dataset(
+                str(csv_path), str(root), "bad",
+                sample_rate_hz=800e6, input_signal_fs=700e6,
+            )
+        except ValueError as error:
+            assert "must match" in str(error)
+        else:
+            raise AssertionError("conflicting sample-rate aliases were accepted")
+
+
 if __name__ == "__main__":
     test_store_true_and_explicit_artifacts_have_valid_argv()
     test_train_dpd_api_emits_quant_and_explicit_artifact_flags()
+    test_create_dataset_writes_canonical_sample_rate_and_rejects_conflict()
     print("PASS test_store_true_and_explicit_artifacts_have_valid_argv")

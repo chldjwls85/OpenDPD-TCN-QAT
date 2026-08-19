@@ -1,4 +1,4 @@
-"""Strict validation for the TCN-Compiler/OpenDPD manifest-v1 boundary."""
+"""Strict validation for TCN-Compiler/OpenDPD integer export manifests."""
 from __future__ import annotations
 
 import hashlib
@@ -8,10 +8,21 @@ import re
 from pathlib import Path
 from typing import Any, Mapping
 
+from .rounding_policy import (
+    BASELINE_RNE,
+    DISCARD_LSB_SIGNED_FLOOR,
+    GLOBAL_FLOOR,
+    PREHS_FLOOR,
+    ROUND_TO_NEAREST_TIES_TO_EVEN,
+    quantizes_pre_hardswish_input,
+    validate_rounding_policy,
+)
+
 
 MANIFEST_FORMAT = "opendpd_fexlite_qat_rtl_export"
-MANIFEST_VERSION = 1
-ROUNDING_MODE = "round_to_nearest_ties_to_even"
+MANIFEST_VERSION = 2
+LEGACY_MANIFEST_VERSION = 1
+ROUNDING_MODE = ROUND_TO_NEAREST_TIES_TO_EVEN
 QUANTIZER_OVERFLOW = "saturate_at_explicit_quantizer_output"
 MEM_ENCODING = "two_complement_hex_one_word_per_line"
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -43,7 +54,12 @@ def _power_of_two(scale: Any, exponent: Any, label: str) -> None:
         raise ValueError(f"{label}.scale is inconsistent with its power-of-two exponent")
 
 
-def _quantizer(record: Mapping[str, Any], label: str, expected_bits: int | None = None) -> int:
+def _quantizer(
+    record: Mapping[str, Any],
+    label: str,
+    expected_bits: int | None = None,
+    expected_rounding: str = ROUNDING_MODE,
+) -> int:
     if not isinstance(record, Mapping):
         raise ValueError(f"{label} must be an object")
     bits = _integer(record.get("bits"), f"{label}.bits", 2)
@@ -58,9 +74,13 @@ def _quantizer(record: Mapping[str, Any], label: str, expected_bits: int | None 
     if record.get("zero_point") != 0:
         raise ValueError(f"{label}.zero_point must be zero")
     _power_of_two(record.get("scale"), record.get("scale_exponent"), label)
-    if record.get("rounding") != ROUNDING_MODE:
+    if record.get("rounding") != expected_rounding:
+        expected_label = (
+            f"signed RNE ties-to-even ({expected_rounding})"
+            if expected_rounding == ROUNDING_MODE else expected_rounding
+        )
         raise ValueError(
-            f"{label}.rounding must be signed RNE ties-to-even ({ROUNDING_MODE})"
+            f"{label}.rounding must be {expected_label}"
         )
     if record.get("overflow") != QUANTIZER_OVERFLOW:
         raise ValueError(f"{label}.overflow must describe explicit saturation")
@@ -135,23 +155,56 @@ def _memory(
     }, signed
 
 
-def validate_manifest_v1(manifest_path: str | Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Load and strictly validate a complete format-v1 export package."""
+def _validate_manifest(
+    manifest_path: str | Path,
+    expected_version: int,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Load and strictly validate one supported export package version."""
     manifest_path = Path(manifest_path).expanduser().resolve()
     if not manifest_path.is_file():
         raise FileNotFoundError(f"manifest does not exist: {manifest_path}")
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("format") != MANIFEST_FORMAT:
         raise ValueError(f"unsupported manifest format: {manifest.get('format')!r}")
-    if manifest.get("format_version") != MANIFEST_VERSION:
+    if manifest.get("format_version") != expected_version:
         raise ValueError(f"unsupported manifest version: {manifest.get('format_version')!r}")
     root = manifest_path.parent
 
     quantization = manifest.get("quantization")
     if not isinstance(quantization, Mapping):
         raise ValueError("manifest.quantization must be an object")
-    activation_bits = _quantizer(quantization.get("raw_input"), "raw_input")
-    _quantizer(quantization.get("dpd_output"), "dpd_output", activation_bits)
+    if expected_version == LEGACY_MANIFEST_VERSION:
+        rounding_policy = None
+        mode = BASELINE_RNE
+        boundaries = {
+            name: ROUNDING_MODE for name in (
+                "stored_raw_input", "stored_weight", "stored_bias",
+                "fex_feature_requantization",
+                "pre_hardswish_requantization",
+                "post_hardswish_activation_requantization",
+                "residual_output_requantization",
+            )
+        }
+    else:
+        rounding_policy = validate_rounding_policy(
+            quantization.get("rounding_policy")
+        )
+        mode = rounding_policy["mode"]
+        boundaries = rounding_policy["boundaries"]
+    activation_bits = _quantizer(
+        quantization.get("raw_input"), "raw_input",
+        expected_rounding=boundaries["stored_raw_input"],
+    )
+    pre_hardswish_bits = _integer(
+        quantization.get("pre_hardswish_bits", activation_bits),
+        "pre_hardswish_bits", 2,
+    )
+    if pre_hardswish_bits > 32:
+        raise ValueError("pre_hardswish_bits must be <= 32")
+    _quantizer(
+        quantization.get("dpd_output"), "dpd_output", activation_bits,
+        expected_rounding=boundaries["residual_output_requantization"],
+    )
     expected_boundary_scale = 2.0 ** (1 - activation_bits)
     for name in ("raw_input", "dpd_output"):
         if float(quantization[name]["scale"]) != expected_boundary_scale:
@@ -160,7 +213,26 @@ def validate_manifest_v1(manifest_path: str | Path) -> tuple[dict[str, Any], lis
     if not isinstance(numeric_contract, Mapping):
         raise ValueError("numeric_contract must be an object")
     if numeric_contract.get("rounding") != ROUNDING_MODE:
-        raise ValueError("numeric_contract rounding must be signed RNE ties-to-even")
+        raise ValueError("numeric_contract stored-code rounding must be signed RNE ties-to-even")
+    if expected_version == LEGACY_MANIFEST_VERSION:
+        legacy_activation_rounding = numeric_contract.get(
+            "activation_boundary_rounding", ROUNDING_MODE
+        )
+        if legacy_activation_rounding == DISCARD_LSB_SIGNED_FLOOR:
+            mode = PREHS_FLOOR
+            boundaries["pre_hardswish_requantization"] = (
+                DISCARD_LSB_SIGNED_FLOOR
+            )
+            boundaries["post_hardswish_activation_requantization"] = (
+                DISCARD_LSB_SIGNED_FLOOR
+            )
+        elif legacy_activation_rounding != ROUNDING_MODE:
+            raise ValueError("legacy activation boundary rounding is unsupported")
+    if expected_version == MANIFEST_VERSION:
+        if numeric_contract.get("rounding_policy_capability_sha256") != (
+            rounding_policy["capability_sha256"]
+        ):
+            raise ValueError("numeric_contract rounding policy digest mismatch")
     if not str(numeric_contract.get("saturation", "")).startswith("only at explicit "):
         raise ValueError("numeric_contract must declare explicit saturation")
 
@@ -220,12 +292,23 @@ def validate_manifest_v1(manifest_path: str | Path) -> tuple[dict[str, Any], lis
             "out_channel,input_channel_per_group,kernel_index"
         ):
             raise ValueError(f"layer {index} weight flatten order mismatch")
-        layer_weight_bits = _quantizer(layer.get("weight"), f"layer {index} weight")
+        layer_weight_bits = _quantizer(
+            layer.get("weight"), f"layer {index} weight",
+            expected_rounding=boundaries["stored_weight"],
+        )
         if weight_bits is None:
             weight_bits = layer_weight_bits
         elif layer_weight_bits != weight_bits:
             raise ValueError("all v1 layer weights must use one precision")
-        _quantizer(layer.get("input_activation"), f"layer {index} activation", activation_bits)
+        activation_rounding = (
+            boundaries["fex_feature_requantization"]
+            if index == 0 else
+            boundaries["post_hardswish_activation_requantization"]
+        )
+        _quantizer(
+            layer.get("input_activation"), f"layer {index} activation",
+            activation_bits, expected_rounding=activation_rounding,
+        )
         weight_count = math.prod(shape)
         artifact, _ = _memory(
             root, layer["weight"].get("mem"), label=f"{name} weight",
@@ -256,6 +339,27 @@ def validate_manifest_v1(manifest_path: str | Path) -> tuple[dict[str, Any], lis
         )
         if layer.get("followed_by_hardswish") is not (index < len(layers) - 1):
             raise ValueError(f"layer {index} activation placement mismatch")
+        hardswish_input = layer.get("hardswish_input")
+        requires_pre_hs = (
+            quantizes_pre_hardswish_input(mode)
+            and index < len(layers) - 1
+        )
+        if requires_pre_hs != (hardswish_input is not None):
+            raise ValueError(
+                f"layer {index} HardSwish input quantizer presence conflicts "
+                f"with rounding policy {mode!r}"
+            )
+        if hardswish_input is not None:
+            if index == len(layers) - 1:
+                raise ValueError("output projection cannot have a HardSwish input quantizer")
+            _quantizer(
+                hardswish_input,
+                f"layer {index} HardSwish input",
+                pre_hardswish_bits,
+                expected_rounding=boundaries[
+                    "pre_hardswish_requantization"
+                ],
+            )
 
         bias = layer.get("bias")
         if bias is not None:
@@ -265,6 +369,13 @@ def validate_manifest_v1(manifest_path: str | Path) -> tuple[dict[str, Any], lis
                 )
             if bias.get("scale_exponent") != expected_acc_exp:
                 raise ValueError(f"layer {index} bias scale mismatch")
+            if (
+                expected_version == MANIFEST_VERSION
+                and bias.get("rounding") != boundaries["stored_bias"]
+            ):
+                raise ValueError(
+                    f"layer {index} stored bias rounding must remain RNE"
+                )
             _power_of_two(bias.get("scale"), bias.get("scale_exponent"), f"layer {index} bias")
             values = bias.get("values")
             if not isinstance(values, list) or len(values) != out_channels:
@@ -306,6 +417,10 @@ def validate_manifest_v1(manifest_path: str | Path) -> tuple[dict[str, Any], lis
             layer["out_channels"],
             layer["accumulator"]["minimum_signed_bits_from_full_code_range"],
         )
+        if layer.get("hardswish_input") is not None:
+            expected_golden[f"conv{index}_hardswish_input"] = (
+                layer["out_channels"], pre_hardswish_bits
+            )
     if set(files) != set(expected_golden):
         raise ValueError("golden trace set is incomplete or contains unknown traces")
     for name, (channels, bits) in expected_golden.items():
@@ -322,9 +437,39 @@ def validate_manifest_v1(manifest_path: str | Path) -> tuple[dict[str, Any], lis
     return manifest, artifacts
 
 
+def validate_manifest_v1(
+    manifest_path: str | Path,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Validate an immutable legacy format-v1 package."""
+    return _validate_manifest(manifest_path, LEGACY_MANIFEST_VERSION)
+
+
+def validate_manifest_v2(
+    manifest_path: str | Path,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Validate a format-v2 package with an explicit rounding policy."""
+    return _validate_manifest(manifest_path, MANIFEST_VERSION)
+
+
+def validate_manifest(
+    manifest_path: str | Path,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    path = Path(manifest_path).expanduser().resolve()
+    document = json.loads(path.read_text())
+    version = document.get("format_version")
+    if version == LEGACY_MANIFEST_VERSION:
+        return validate_manifest_v1(path)
+    if version == MANIFEST_VERSION:
+        return validate_manifest_v2(path)
+    raise ValueError(f"unsupported manifest version: {version!r}")
+
+
 __all__ = [
     "MANIFEST_FORMAT",
     "MANIFEST_VERSION",
+    "LEGACY_MANIFEST_VERSION",
     "ROUNDING_MODE",
+    "validate_manifest",
     "validate_manifest_v1",
+    "validate_manifest_v2",
 ]

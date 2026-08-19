@@ -7,6 +7,7 @@
         "test": 0.2
     },
 
+    "sample_rate_hz": 800e6,
     "input_signal_fs": 800e6,
     "bw_main_ch": 200e6,
     "bw_sub_ch": 20e6,

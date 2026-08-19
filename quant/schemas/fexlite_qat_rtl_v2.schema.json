@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/opendpd/fexlite_qat_rtl_v2.schema.json",
+  "title": "OpenDPD FExLite QAT RTL export v2",
+  "type": "object",
+  "required": [
+    "format",
+    "format_version",
+    "provenance",
+    "model",
+    "quantization",
+    "golden_vectors"
+  ],
+  "properties": {
+    "format": {"const": "opendpd_fexlite_qat_rtl_export"},
+    "format_version": {"const": 2},
+    "model": {
+      "type": "object",
+      "required": [
+        "backbone",
+        "hidden_channels",
+        "temporal_layers",
+        "kernel_size",
+        "dilations",
+        "layers",
+        "mac_per_sample"
+      ],
+      "properties": {
+        "backbone": {"const": "fexlite_causal_tcn"},
+        "hidden_channels": {"type": "integer", "minimum": 1},
+        "temporal_layers": {"type": "integer", "minimum": 1},
+        "kernel_size": {"type": "integer", "minimum": 1},
+        "dilations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "integer", "minimum": 1}
+        },
+        "layers": {"type": "array", "minItems": 3},
+        "mac_per_sample": {"type": "integer", "minimum": 1}
+      }
+    },
+    "quantization": {
+      "type": "object",
+      "required": [
+        "raw_input",
+        "dpd_output",
+        "numeric_contract",
+        "rounding_policy"
+      ],
+      "properties": {
+        "rounding_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "format",
+            "format_version",
+            "mode",
+            "boundaries",
+            "capability_sha256"
+          ],
+          "properties": {
+            "format": {"const": "opendpd_fexlite_rounding_policy"},
+            "format_version": {"const": 1},
+            "mode": {
+              "enum": [
+                "baseline_rne", "prehs_floor", "global_floor",
+                "research_prehs_input_floor",
+                "research_prehs_input_rne",
+                "research_posths_activation_floor",
+                "research_global_floor_no_prehs"
+              ]
+            },
+            "boundaries": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "stored_raw_input",
+                "stored_weight",
+                "stored_bias",
+                "fex_feature_requantization",
+                "pre_hardswish_requantization",
+                "post_hardswish_activation_requantization",
+                "residual_output_requantization"
+              ],
+              "properties": {
+                "stored_raw_input": {"const": "round_to_nearest_ties_to_even"},
+                "stored_weight": {"const": "round_to_nearest_ties_to_even"},
+                "stored_bias": {"const": "round_to_nearest_ties_to_even"},
+                "fex_feature_requantization": {"$ref": "#/$defs/runtimeRounding"},
+                "pre_hardswish_requantization": {"$ref": "#/$defs/runtimeRounding"},
+                "post_hardswish_activation_requantization": {"$ref": "#/$defs/runtimeRounding"},
+                "residual_output_requantization": {"$ref": "#/$defs/runtimeRounding"}
+              }
+            },
+            "capability_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        }
+      }
+    },
+    "golden_vectors": {
+      "type": "object",
+      "required": ["length", "files", "acceptance_for_rtl"]
+    }
+  },
+  "$defs": {
+    "runtimeRounding": {
+      "enum": [
+        "round_to_nearest_ties_to_even",
+        "discard_lsb_signed_floor"
+      ]
+    }
+  }
+}

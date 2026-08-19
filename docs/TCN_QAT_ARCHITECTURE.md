@@ -83,12 +83,24 @@ processes layers sequentially so that every Conv1d observes the same samples.
 The raw/output interface scales remain fixed; only internal activation scales
 are set to powers of two that cover the absolute quantile.
 
+The checkpoint also carries a fail-closed rounding-policy record.
+`baseline_rne` uses RNE at every runtime requantization. `prehs_floor` uses
+signed floor at the pre- and post-HardSwish boundaries while FEx and the final
+residual remain RNE. `global_floor` additionally applies signed floor to FEx
+features and the residual/output boundary. Raw ADC code generation and stored
+weight/bias quantization remain RNE in all three modes. Training, export, and
+evaluation must select the same policy; the exporter rejects a mismatch.
+
 ## Export and Equivalence Boundary
 
-The exporter publishes a self-contained `opendpd_fexlite_qat_rtl_export` v1
+The exporter publishes a self-contained `opendpd_fexlite_qat_rtl_export` v2
 package containing `manifest.json`, `weights/*.mem`, and
 `golden_vectors/*.mem`. Every package path is relative, and the manifest records
-the SHA-256 identity of each memory. TCN-Compiler consumes only this package: it does
+the SHA-256 identity of each memory. It also records the canonical
+`opendpd_fexlite_rounding_policy` and its capability SHA-256. Version 1 defaults
+to baseline RNE or is inferred as historical `prehs_floor` when its explicit
+activation-boundary and per-layer `hardswish_input` evidence is present; it
+cannot express global floor. TCN-Compiler consumes only this package: it does
 not import this frontend's Python modules, checkpoint, or dataset loader.
 
 The exact integer evaluator defined by the export is the hardware reference.
@@ -97,6 +109,11 @@ RTL must independently match those traces at 0 LSB. Fake-QAT execution is a
 different equivalence level: PyTorch operation and quantizer placement can
 produce small code differences, so fake-QAT-versus-integer results must be
 measured and reported separately from integer-versus-RTL agreement.
+
+`global_floor` is qualified per topology and precision through DPD-Flow's
+seed-4 pilot and paired five-seed frozen-PA gate. A failed gate preserves the
+research evidence and selects the validated fallback contract for downstream
+RTL and AutoPipe.
 
 The canonical rounding, saturation, FEx, tap-order, HardSwish, and residual
 arithmetic is maintained once in the monorepo

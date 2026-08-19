@@ -29,6 +29,17 @@ def parse_args():
     parser.add_argument("--golden-start", type=int, default=0)
     parser.add_argument("--golden-length", type=int, default=256)
     parser.add_argument("--golden-seed", type=int, default=2026)
+    parser.add_argument(
+        "--rounding-policy-mode",
+        choices=[
+            "baseline_rne", "prehs_floor", "global_floor",
+            "research_prehs_input_floor",
+            "research_prehs_input_rne",
+            "research_posths_activation_floor",
+            "research_global_floor_no_prehs",
+        ],
+        help="Verify that the checkpoint declares this rounding policy.",
+    )
     return parser.parse_args()
 
 
@@ -43,6 +54,7 @@ def main():
         golden_length=args.golden_length,
         golden_seed=args.golden_seed,
         dataset_name=args.dataset_name,
+        rounding_policy_mode=args.rounding_policy_mode,
     )
     comparison = manifest["golden_vectors"]["integer_vs_fake_qat"]
     print(json.dumps({

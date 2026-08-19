@@ -439,7 +439,8 @@ def create_dataset(
         dataset_format: `'single_csv'` (default) to keep a single CSV or `'split_csv'` to
             generate the classic six-file layout
         csv_filename: Optional filename for the generated single CSV (defaults to `data.csv`)
-        **spec_kwargs: Additional fields for spec.json (e.g., input_signal_fs, bw_main_ch)
+        **spec_kwargs: Additional fields for spec.json. `sample_rate_hz` is
+            canonical; `input_signal_fs` remains a compatible alias.
 
     Returns:
         Path to the created dataset directory
@@ -457,6 +458,18 @@ def create_dataset(
     """
     import pandas as pd
     import json
+
+    canonical_rate = spec_kwargs.get('sample_rate_hz')
+    legacy_rate = spec_kwargs.get('input_signal_fs')
+    if canonical_rate is not None and legacy_rate is not None:
+        if float(canonical_rate) != float(legacy_rate):
+            raise ValueError(
+                "sample_rate_hz and input_signal_fs must match when both are supplied"
+            )
+    selected_rate = canonical_rate if canonical_rate is not None else legacy_rate
+    if selected_rate is not None:
+        spec_kwargs['sample_rate_hz'] = float(selected_rate)
+        spec_kwargs['input_signal_fs'] = float(selected_rate)
 
     dataset_format_normalized = dataset_format.lower()
     if dataset_format_normalized not in {'single_csv', 'split_csv'}:

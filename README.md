@@ -6,6 +6,9 @@
 > [TCN-QAT workflow](docs/TCN_QAT_WORKFLOW.md) and
 > [upstream provenance](docs/UPSTREAM_AND_LICENSE.md). The upstream OpenDPD
 > documentation below is intentionally retained to minimize fork drift.
+> Native export version 2 binds the selected operation-boundary rounding policy
+> (`baseline_rne`, `prehs_floor`, or `global_floor`) and independent
+> Pre-HardSwish width into checkpoint, manifest, and golden-trace provenance.
 
 [![CI](https://github.com/lab-emi/OpenDPD/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/lab-emi/OpenDPD/actions/workflows/ci.yml)
 [![Weekly](https://github.com/lab-emi/OpenDPD/actions/workflows/weekly.yml/badge.svg?branch=main)](https://github.com/lab-emi/OpenDPD/actions/workflows/weekly.yml)

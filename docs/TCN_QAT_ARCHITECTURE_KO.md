@@ -74,11 +74,22 @@ Calibration은 train loader의 최초 N batch를 한 번 cache하고 모든 Conv
 관찰하도록 순차 수행한다. Raw/output interface scale은 고정하고 내부 activation scale만
 absolute quantile을 덮는 power-of-two로 설정한다.
 
+Checkpoint는 fail-closed rounding-policy record도 보존한다. `baseline_rne`는 모든
+runtime requantization에 RNE를 사용한다. `prehs_floor`는 HardSwish 전후 경계에 signed
+floor를 사용하고 FEx와 최종 residual은 RNE를 유지한다. `global_floor`는 FEx feature와
+residual/output 경계에도 signed floor를 적용한다. Raw ADC code 생성과 저장
+weight/bias 양자화는 세 mode 모두 RNE다. Training, export, evaluation은 같은 정책을
+선택해야 하며 exporter는 불일치를 거부한다.
+
 ## Export와 정합성 경계
 
 Exporter는 `manifest.json`, `weights/*.mem`, `golden_vectors/*.mem`으로 구성된
-self-contained `opendpd_fexlite_qat_rtl_export` v1 package를 출판한다. 모든 package
-경로는 상대경로이며 manifest는 각 memory의 SHA-256 identity를 기록한다. TCN-Compiler는 이
+self-contained `opendpd_fexlite_qat_rtl_export` v2 package를 출판한다. 모든 package
+경로는 상대경로이며 manifest는 각 memory의 SHA-256 identity와 canonical
+`opendpd_fexlite_rounding_policy`, capability SHA-256을 기록한다. Version 1은 baseline
+RNE가 기본이며 명시적인 activation-boundary와 layer별 `hardswish_input` 근거가 있을
+때 과거 `prehs_floor`로 추론한다. Version 1은 global floor를 표현할 수 없다.
+TCN-Compiler는 이
 package만 입력으로 받고 frontend의 Python module, checkpoint, dataset loader를 import하지
 않는다.
 
@@ -87,6 +98,10 @@ Export가 정의하는 exact integer evaluator가 hardware reference다. Package
 0 LSB로 일치해야 한다. Fake-QAT 실행은 별도의 정합성 수준이다. PyTorch operation과
 quantizer 배치 때문에 작은 code 차이가 생길 수 있으므로 fake-QAT-versus-integer 결과는
 integer-versus-RTL 정합성과 분리해 측정하고 보고한다.
+
+`global_floor`는 topology와 precision별로 DPD-Flow seed-4 pilot 및 paired 5-seed
+frozen-PA 게이트를 통과해야 한다. 실패 결과는 연구 근거로 보존하고 downstream RTL과
+AutoPipe에는 검증된 fallback 계약을 선택한다.
 
 Canonical rounding, saturation, FEx, tap order, HardSwish, residual 산술은 monorepo의
 [수치 계약](https://github.com/chldjwls85/DPD-Flow/blob/main/docs/NUMERIC_CONTRACT_KO.md)

@@ -5,6 +5,7 @@ from typing import Any
 
 from .quant_envs import AttrDict, Base_GRUQuantEnv, FExLiteTCNQuantEnv
 from .modules import Add, Mul, Pow, Sqrt
+from .rounding_policy import BASELINE_RNE
 
 __all__ = [
     "get_quant_model", "AttrDict", "Base_GRUQuantEnv", "FExLiteTCNQuantEnv",
@@ -18,6 +19,7 @@ def _build_quant_args(proj: Any) -> AttrDict:
     return AttrDict({
         "n_bits_w": getattr(proj, "n_bits_w", 8),
         "n_bits_a": getattr(proj, "n_bits_a", 8),
+        "pre_hardswish_bits": getattr(proj, "pre_hardswish_bits", 0),
         "pretrained_model": getattr(proj, "pretrained_model", ""),
         "quant_dir_label": getattr(proj, "quant_dir_label", ""),
         "dpd_backbone": getattr(proj, "DPD_backbone", ""),
@@ -26,6 +28,9 @@ def _build_quant_args(proj: Any) -> AttrDict:
         ),
         "quant_calibration_quantile": getattr(
             proj, "quant_calibration_quantile", 0.9999
+        ),
+        "rounding_policy_mode": getattr(
+            proj, "rounding_policy_mode", BASELINE_RNE
         ),
     })
 
