@@ -34,7 +34,7 @@ from quant.rtl_export import (
     run_integer_reference,
     sha256_file,
 )
-from quant.rtl_manifest import validate_manifest_v1
+from quant.rtl_manifest import validate_manifest
 from utils.metrics import ACLR, EVM, NMSE
 from utils.util import set_target_gain
 
@@ -42,7 +42,7 @@ from utils.util import set_target_gain
 EVALUATION_FORMAT = "opendpd_fexlite_integer_frozen_pa_evaluation"
 EVALUATION_FORMAT_VERSION = 1
 SUPPORTED_MANIFEST_FORMAT = "opendpd_fexlite_qat_rtl_export"
-SUPPORTED_MANIFEST_VERSION = 1
+SUPPORTED_MANIFEST_VERSIONS = {1, 2}
 DEFAULT_NPERSEG = 2560
 DEFAULT_SAMPLE_RATE = 800e6
 DEFAULT_MAIN_CHANNEL_BW = 200e6
@@ -239,7 +239,7 @@ def _verify_manifest_and_mem(
     manifest_path: Path,
     manifest: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
-    validated, artifacts = validate_manifest_v1(manifest_path)
+    validated, artifacts = validate_manifest(manifest_path)
     if validated != manifest:
         raise ValueError("manifest changed while it was being validated")
     return [
@@ -264,6 +264,7 @@ def _run_integer_dpd(
             raw_quantizer["scale"],
             raw_quantizer["qmin"],
             raw_quantizer["qmax"],
+            raw_quantizer["rounding"],
         )
         output_codes = run_integer_reference(
             input_codes,
@@ -349,10 +350,12 @@ def _source_hashes() -> dict[str, str]:
         "quant/modules/gru.py",
         "quant/modules/ops.py",
         "quant/qmodules/__init__.py",
+        "quant/qmodules/quant_activations.py",
         "quant/qmodules/quant_layers.py",
         "quant/qmodules/quant_ops.py",
         "quant/qmodules/quantizers.py",
         "quant/quant_envs.py",
+        "quant/rounding_policy.py",
         "quant/rtl_evaluate.py",
         "quant/rtl_export.py",
         "quant/rtl_manifest.py",
@@ -363,6 +366,27 @@ def _source_hashes() -> dict[str, str]:
         relative_path: sha256_file(root / relative_path)
         for relative_path in relative_paths
     }
+
+
+def _fake_output_codes(
+    fake_output: torch.Tensor,
+    manifest: Mapping[str, Any],
+) -> torch.Tensor:
+    output = manifest["quantization"]["dpd_output"]
+    policy = manifest["quantization"].get("rounding_policy")
+    boundaries = policy.get("boundaries") if isinstance(policy, Mapping) else None
+    rounding = (
+        boundaries.get("residual_output_requantization")
+        if isinstance(boundaries, Mapping)
+        else output["rounding"]
+    )
+    return quantize_codes(
+        fake_output,
+        float(output["scale"]),
+        int(output["qmin"]),
+        int(output["qmax"]),
+        rounding=str(rounding),
+    )
 
 
 def evaluate_fexlite_integer_pa(
@@ -380,6 +404,7 @@ def evaluate_fexlite_integer_pa(
     sample_rate: float | None = None,
     bw_main_ch: float | None = None,
     n_sub_ch: int | None = None,
+    rounding_policy_mode: str | None = None,
 ) -> dict[str, Any]:
     """Evaluate an exported integer DPD through a frozen DGRU PA.
 
@@ -397,6 +422,18 @@ def evaluate_fexlite_integer_pa(
         raise FileNotFoundError(f"PA checkpoint does not exist: {pa_checkpoint}")
 
     manifest, runtime_layers = load_exported_integer_runtime(manifest_path)
+    manifest_policy_mode = manifest["quantization"].get(
+        "rounding_policy", {"mode": "baseline_rne"}
+    )["mode"]
+    if (
+        rounding_policy_mode is not None
+        and rounding_policy_mode != manifest_policy_mode
+    ):
+        raise ValueError(
+            "explicit rounding policy mode does not match manifest: "
+            f"requested={rounding_policy_mode!r}, "
+            f"manifest={manifest_policy_mode!r}"
+        )
     weight_artifacts = _verify_manifest_and_mem(manifest_path, manifest)
     declared_pa = manifest.get("provenance", {}).get("pa_checkpoint")
     actual_pa_sha = sha256_file(pa_checkpoint)
@@ -498,7 +535,7 @@ def evaluate_fexlite_integer_pa(
         metrics["fake_qat_dpd_frozen_pa"] = _metrics(
             fake_pa_output, reference_segments, **metric_arguments
         )
-        fake_codes = torch.round(fake_dpd.detach().cpu() / output_scale).to(torch.int64)
+        fake_codes = _fake_output_codes(fake_dpd, manifest)
         code_delta = fake_codes - output_codes
         fake_qat_record = {
             "checkpoint": _artifact_record(qat_checkpoint),
@@ -583,6 +620,7 @@ def evaluate_fexlite_integer_pa(
             "frozen_pa": pa_model_record,
         },
         "quantization": {
+            "rounding_policy_mode": manifest_policy_mode,
             "raw_input": manifest["quantization"]["raw_input"],
             "dpd_output": manifest["quantization"]["dpd_output"],
             "raw_input_saturation_count": int(

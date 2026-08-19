@@ -56,6 +56,7 @@ Every dataset has a `spec.json` that describes the signal parameters. Fields fal
 | `dataset_format` | string | `"split_csv"` (separate train/val/test files) or `"single_csv"` (one `data.csv`) |
 | `split_ratios` | object | Fraction of data for `train`, `val`, `test` (must sum to 1.0) |
 | `input_signal_fs` | float | Sampling rate of the I/Q data (Hz) |
+| `sample_rate_hz` | float | Canonical machine-readable sample rate used by DPD-Flow. When both sample-rate fields exist, they must be identical. |
 | `bw_main_ch` | float | Total occupied bandwidth of the composite signal (Hz) |
 | `bw_sub_ch` | float | Bandwidth per sub-channel / carrier spacing (Hz) |
 | `n_sub_ch` | int | Number of sub-channels (carriers) |
@@ -74,6 +75,11 @@ Every dataset has a `spec.json` that describes the signal parameters. Fields fal
 | `cp_other` | int | Cyclic prefix length of subsequent OFDM symbols (samples) |
 | `test_model` | string | LTE test model (e.g. `"TM3.1a"`) |
 | `papr_db` | float | Peak-to-average power ratio (dB) |
+
+DPD-Flow derives the required hardware clock from the sample rate rather than
+the dataset name: `required_clock_hz = sample_rate_hz × II ×
+(1 + timing_margin_pct/100)`. Occupied RF bandwidth and complex-sample rate are
+different quantities.
 
 ### Single-CSV fields (MyCustomPA)
 

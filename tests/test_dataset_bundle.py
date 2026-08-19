@@ -44,6 +44,8 @@ class DatasetBundleTests(unittest.TestCase):
             spec = json.load(handle)
         self.assertIsInstance(spec, dict)
         self.assertEqual(spec.get("dataset_format"), expected_format)
+        self.assertIsInstance(spec.get("sample_rate_hz"), (int, float))
+        self.assertEqual(spec.get("sample_rate_hz"), spec.get("input_signal_fs"))
         return spec
 
     def _assert_csv_has_data(self, path: Path, expected_header: tuple[str, ...]) -> None:

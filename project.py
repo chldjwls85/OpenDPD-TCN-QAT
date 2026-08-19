@@ -94,6 +94,14 @@ class Project:
                     'A': f"{self.n_bits_a:d}",
                     'W': f"{self.n_bits_w:d}",
                 })
+                rounding_mode = getattr(
+                    self, 'rounding_policy_mode', 'baseline_rne'
+                )
+                if rounding_mode != 'baseline_rne':
+                    dict_dpd['RP'] = rounding_mode.upper()
+                pre_hs_bits = int(getattr(self, 'pre_hardswish_bits', 0))
+                if pre_hs_bits not in (0, self.n_bits_a):
+                    dict_dpd['PH'] = f"{pre_hs_bits:d}"
         dict_dpd['P'] = f"{n_net_params:d}"
         if 'delta' in self.DPD_backbone:
             dict_dpd['THX'] = f"{self.thx:.3f}"

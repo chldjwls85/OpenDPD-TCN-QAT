@@ -24,7 +24,14 @@ from quant.rtl_export import export_fexlite_qat_rtl
 from quant.rtl_evaluate import (
     EVALUATION_FORMAT,
     EVALUATION_FORMAT_VERSION,
+    _fake_output_codes,
+    _source_hashes,
     evaluate_fexlite_integer_pa,
+)
+from quant.rounding_policy import (
+    BASELINE_RNE,
+    GLOBAL_FLOOR,
+    rounding_policy_record,
 )
 
 
@@ -152,6 +159,43 @@ def test_integer_contract_frozen_pa_evaluation_is_finite_and_self_contained(tmp_
         assert all(math.isfinite(value) for value in metric_set.values())
     assert not _contains_absolute_path(result)
     assert not list(tmp_path.glob(".evaluation.json.*.tmp"))
+
+
+def test_fake_output_code_rounding_uses_manifest_residual_policy():
+    values = torch.tensor([-1.75, -1.25, -0.75, 0.75, 1.25, 1.75])
+    output = {
+        "scale": 0.5,
+        "qmin": -4,
+        "qmax": 3,
+        "rounding": "round_to_nearest_ties_to_even",
+    }
+    baseline_manifest = {
+        "quantization": {
+            "dpd_output": output,
+            "rounding_policy": rounding_policy_record(BASELINE_RNE),
+        }
+    }
+    floor_manifest = {
+        "quantization": {
+            "dpd_output": output,
+            "rounding_policy": rounding_policy_record(GLOBAL_FLOOR),
+        }
+    }
+    assert torch.equal(
+        _fake_output_codes(values, baseline_manifest),
+        torch.tensor([-4, -2, -2, 2, 2, 3]),
+    )
+    assert torch.equal(
+        _fake_output_codes(values, floor_manifest),
+        torch.tensor([-4, -3, -2, 1, 2, 3]),
+    )
+
+
+def test_evaluator_provenance_hashes_rounding_implementation_sources():
+    hashes = _source_hashes()
+    assert "quant/rounding_policy.py" in hashes
+    assert "quant/qmodules/quant_activations.py" in hashes
+    assert all(len(value) == 64 for value in hashes.values())
 
 
 if __name__ == "__main__":

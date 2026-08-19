@@ -16,6 +16,7 @@ from utils.util import count_net_params
 import sys
 sys.path.append('../..')
 from quant import get_quant_model
+from quant.rounding_policy import rounding_policy_record
 from steps.training_artifacts import atomic_copy as _atomic_copy
 from steps.training_artifacts import publish_checkpoint
 
@@ -103,6 +104,14 @@ def _qat_sidecars(proj: Project, checkpoint: Path) -> dict[str, dict]:
         return {}
     checkpoint_sha256 = _sha256_file(checkpoint)
     final_scales = _final_quantizer_scales(checkpoint)
+    rounding_policy = rounding_policy_record(getattr(
+        proj, 'rounding_policy_mode', 'baseline_rne'
+    ))
+    requested_pre_hs_bits = int(getattr(proj, 'pre_hardswish_bits', 0))
+    pre_hardswish_bits = (
+        int(proj.n_bits_a) if requested_pre_hs_bits == 0
+        else requested_pre_hs_bits
+    )
     return {
         '.calibration.json': {
             'format': 'opendpd_tcn_qat_calibration',
@@ -112,6 +121,11 @@ def _qat_sidecars(proj: Project, checkpoint: Path) -> dict[str, dict]:
             'seed': proj.seed,
             'activation_bits': proj.n_bits_a,
             'weight_bits': proj.n_bits_w,
+            'pre_hardswish_bits': pre_hardswish_bits,
+            'rounding_policy_mode': getattr(
+                proj, 'rounding_policy_mode', 'baseline_rne'
+            ),
+            'rounding_policy': rounding_policy,
             'quantile': proj.quant_calibration_quantile,
             'maximum_batches': proj.quant_calibration_batches,
             'checkpoint_sha256': checkpoint_sha256,
@@ -129,6 +143,13 @@ def _qat_sidecars(proj: Project, checkpoint: Path) -> dict[str, dict]:
                 proj.tcn_dilation_base ** index
                 for index in range(proj.DPD_num_layers)
             ],
+            'activation_bits': proj.n_bits_a,
+            'weight_bits': proj.n_bits_w,
+            'pre_hardswish_bits': pre_hardswish_bits,
+            'rounding_policy_mode': getattr(
+                proj, 'rounding_policy_mode', 'baseline_rne'
+            ),
+            'rounding_policy': rounding_policy,
             'activation': 'hardswish',
         },
     }

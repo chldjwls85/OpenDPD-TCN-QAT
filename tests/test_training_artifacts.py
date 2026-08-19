@@ -19,6 +19,12 @@ if str(REPO_ROOT) not in sys.path:
 from models import CoreModel
 from quant import get_quant_model
 from quant.rtl_export import export_fexlite_qat_rtl
+from quant.rounding_policy import (
+    GLOBAL_FLOOR,
+    RESEARCH_PREHS_INPUT_RNE,
+    ROUND_TO_NEAREST_TIES_TO_EVEN,
+    rounding_policy_record,
+)
 from steps.train_dpd import (
     _publish_dpd_artifacts,
     _publish_qat_artifacts,
@@ -27,7 +33,11 @@ from steps.train_dpd import (
 from steps.training_artifacts import publish_checkpoint
 
 
-def _project(root: Path, save_count: int = 1) -> SimpleNamespace:
+def _project(
+    root: Path,
+    save_count: int = 1,
+    rounding_policy_mode: str = "baseline_rne",
+) -> SimpleNamespace:
     source = root / "legacy" / "best.pt"
     source.parent.mkdir(parents=True)
     project = SimpleNamespace(
@@ -64,6 +74,7 @@ def _project(root: Path, save_count: int = 1) -> SimpleNamespace:
         DPD_num_layers=2,
         tcn_kernel_size=5,
         tcn_dilation_base=2,
+        rounding_policy_mode=rounding_policy_mode,
     )
     quant_project = SimpleNamespace(
         quant=True,
@@ -74,6 +85,7 @@ def _project(root: Path, save_count: int = 1) -> SimpleNamespace:
         DPD_backbone="fexlite_causal_tcn",
         quant_calibration_batches=2,
         quant_calibration_quantile=0.9999,
+        rounding_policy_mode=rounding_policy_mode,
     )
     qat_model = get_quant_model(
         quant_project,
@@ -161,6 +173,14 @@ class TrainingArtifactTests(unittest.TestCase):
                 calibration["final_effective_quantizers"]["input_quantizer.scale"],
                 {"effective_scale": 2**-11, "scale_exponent": -11},
             )
+            expected_policy = rounding_policy_record("baseline_rne")
+            self.assertEqual(calibration["rounding_policy"], expected_policy)
+            self.assertEqual(
+                json.loads(target.with_suffix(".model_spec.json").read_text())[
+                    "rounding_policy"
+                ],
+                expected_policy,
+            )
 
             export_dir = target.parent / "rtl_export"
             manifest = export_fexlite_qat_rtl(target, export_dir, golden_length=4)
@@ -168,6 +188,78 @@ class TrainingArtifactTests(unittest.TestCase):
                 manifest["provenance"]["training_sidecars"]["status"],
                 "validated",
             )
+
+    def test_global_floor_sidecars_bind_canonical_policy_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proj = _project(root, rounding_policy_mode=GLOBAL_FLOOR)
+            # This unit fixture does not run calibration, so add the explicit
+            # pre-HardSwish records required by the global-floor sidecar.
+            proj.quant_calibration.update({
+                f"hardswish{index}_input": {
+                    "clip": 0.5,
+                    "design_clip": 3.0,
+                    "scale": 2**-11,
+                    "bits": 12,
+                    "rounding": "discard_lsb_signed_floor",
+                    "quantile": 0.9999,
+                    "batches": 2,
+                }
+                for index in range(3)
+            })
+            for index in range(4):
+                proj.quant_calibration[f"conv{index}_input"]["rounding"] = (
+                    "discard_lsb_signed_floor"
+                )
+            checkpoint = _publish_qat_artifacts(proj)
+            expected = rounding_policy_record(GLOBAL_FLOOR)
+            for suffix in (".calibration.json", ".model_spec.json"):
+                sidecar = json.loads(checkpoint.with_suffix(suffix).read_text())
+                self.assertEqual(sidecar["rounding_policy_mode"], GLOBAL_FLOOR)
+                self.assertEqual(sidecar["rounding_policy"], expected)
+            manifest = export_fexlite_qat_rtl(
+                checkpoint,
+                root / "global_export",
+                golden_length=4,
+                rounding_policy_mode=GLOBAL_FLOOR,
+            )
+            self.assertEqual(
+                manifest["quantization"]["rounding_policy"], expected
+            )
+
+    def test_narrow_prehs_rne_sidecar_is_exportable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proj = _project(
+                root, rounding_policy_mode=RESEARCH_PREHS_INPUT_RNE
+            )
+            proj.quant_calibration.update({
+                f"hardswish{index}_input": {
+                    "clip": 0.5,
+                    "design_clip": 3.0,
+                    "scale": 2**-11,
+                    "bits": 12,
+                    "rounding": ROUND_TO_NEAREST_TIES_TO_EVEN,
+                    "quantile": 0.9999,
+                    "batches": 2,
+                }
+                for index in range(3)
+            })
+            checkpoint = _publish_qat_artifacts(proj)
+            manifest = export_fexlite_qat_rtl(
+                checkpoint,
+                root / "prehs_rne_export",
+                golden_length=4,
+                rounding_policy_mode=RESEARCH_PREHS_INPUT_RNE,
+            )
+            self.assertEqual(
+                manifest["quantization"]["rounding_policy"],
+                rounding_policy_record(RESEARCH_PREHS_INPUT_RNE),
+            )
+            self.assertTrue(all(
+                layer.get("hardswish_input") is not None
+                for layer in manifest["model"]["layers"][:-1]
+            ))
 
     def test_preexisting_checkpoint_is_not_published_without_new_save(self):
         with tempfile.TemporaryDirectory() as directory:

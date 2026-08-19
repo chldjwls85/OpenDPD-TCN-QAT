@@ -85,6 +85,13 @@ def get_arguments():
     parser.add_argument('--quant', action='store_true', default=False, help='Whether to quantize the model')
     parser.add_argument('--n_bits_w', default=8, type=int, help='Number of bits for weights')
     parser.add_argument('--n_bits_a', default=8, type=int, help='Number of bits for activations')
+    parser.add_argument(
+        '--pre-hardswish-bits', default=0, type=int,
+        help=(
+            'Signed Pre-HardSwish quantizer width. 0 follows --n_bits_a; '
+            'a positive value makes this an independent QAT hyperparameter.'
+        ),
+    )
     parser.add_argument('--pretrained_model', default='', help='Path to pretrained model')
     parser.add_argument('--dpd_output_checkpoint', default='',
                         help='Atomically publish a newly trained floating-point DPD checkpoint to this path.')
@@ -95,6 +102,21 @@ def get_arguments():
                         help='Training batches used to calibrate TCN activation scales.')
     parser.add_argument('--quant_calibration_quantile', default=0.9999, type=float,
                         help='Absolute activation quantile used for power-of-two QAT scales.')
+    parser.add_argument(
+        '--rounding-policy-mode',
+        default='baseline_rne',
+        choices=[
+            'baseline_rne', 'prehs_floor', 'global_floor',
+            'research_prehs_input_floor',
+            'research_prehs_input_rne',
+            'research_posths_activation_floor',
+            'research_global_floor_no_prehs',
+        ],
+        help=(
+            'Explicit TCN runtime rounding contract. Stored ADC, weight, and '
+            'bias codes remain RNE in every mode.'
+        ),
+    )
     parser.add_argument('--q_pretrain', default=False, type=bool, help='pretrain the model with \
                         self-implementation float models for quantization')
 

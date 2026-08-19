@@ -31,6 +31,17 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Optional fake-QAT comparison checkpoint; SHA must match the manifest",
     )
+    parser.add_argument(
+        "--rounding-policy-mode",
+        choices=[
+            "baseline_rne", "prehs_floor", "global_floor",
+            "research_prehs_input_floor",
+            "research_prehs_input_rne",
+            "research_posths_activation_floor",
+            "research_global_floor_no_prehs",
+        ],
+        help="Verify that the manifest declares this rounding policy.",
+    )
     parser.add_argument("--nperseg", type=int, help="Override dataset spec segment length")
     parser.add_argument("--sample-rate", type=float, help="Override dataset spec sample rate")
     parser.add_argument(
@@ -58,6 +69,7 @@ def main() -> None:
         sample_rate=args.sample_rate,
         bw_main_ch=args.bw_main_ch,
         n_sub_ch=args.n_sub_ch,
+        rounding_policy_mode=args.rounding_policy_mode,
     )
     print(json.dumps({
         "status": result["status"],

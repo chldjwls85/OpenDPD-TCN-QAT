@@ -18,6 +18,16 @@ if str(REPO_ROOT) not in sys.path:
 from models import CoreModel
 from quant import get_quant_model
 from quant.rtl_export import export_fexlite_qat_rtl, verify_exported_golden
+from quant.rounding_policy import (
+    DISCARD_LSB_SIGNED_FLOOR,
+    GLOBAL_FLOOR,
+    PREHS_FLOOR,
+    RESEARCH_GLOBAL_FLOOR_NO_PREHS,
+    RESEARCH_POSTHS_ACTIVATION_FLOOR,
+    RESEARCH_PREHS_INPUT_FLOOR,
+    ROUND_TO_NEAREST_TIES_TO_EVEN,
+    rounding_policy_record,
+)
 
 
 def _quantized_model(
@@ -26,6 +36,8 @@ def _quantized_model(
     kernel_size: int,
     dilation_base: int = 2,
     bits: int = 8,
+    rounding_policy_mode: str = "baseline_rne",
+    pre_hardswish_bits: int = 0,
 ):
     project = SimpleNamespace(
         quant=True,
@@ -36,6 +48,8 @@ def _quantized_model(
         DPD_backbone="fexlite_causal_tcn",
         quant_calibration_batches=1,
         quant_calibration_quantile=0.9999,
+        rounding_policy_mode=rounding_policy_mode,
+        pre_hardswish_bits=pre_hardswish_bits,
     )
     float_model = CoreModel(
         2,
@@ -61,6 +75,255 @@ def _assert_zero_lsb(test: unittest.TestCase, manifest_path: Path) -> None:
 
 
 class FExLiteQATRTLExportTests(unittest.TestCase):
+    def test_independent_prehs_width_roundtrips_in_manifest_and_golden(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint = root / "a12_prehs15.pt"
+            torch.save(
+                _quantized_model(
+                    2, 1, 3, bits=12,
+                    rounding_policy_mode=GLOBAL_FLOOR,
+                    pre_hardswish_bits=15,
+                ).state_dict(),
+                checkpoint,
+            )
+            output = root / "export"
+            manifest = export_fexlite_qat_rtl(
+                checkpoint, output, golden_length=12,
+                rounding_policy_mode=GLOBAL_FLOOR,
+            )
+            self.assertEqual(
+                manifest["quantization"]["pre_hardswish_bits"], 15
+            )
+            self.assertTrue(all(
+                layer["hardswish_input"]["bits"] == 15
+                for layer in manifest["model"]["layers"][:-1]
+            ))
+            self.assertEqual(
+                manifest["golden_vectors"]["files"][
+                    "conv0_hardswish_input"
+                ]["bits"],
+                15,
+            )
+            _assert_zero_lsb(self, output / "manifest.json")
+
+    def test_research_ablation_modes_separate_prehs_and_posths_floor(self):
+        cases = {
+            RESEARCH_PREHS_INPUT_FLOOR: (True, False),
+            RESEARCH_POSTHS_ACTIVATION_FLOOR: (False, True),
+        }
+        for mode, (pre_floor, post_floor) in cases.items():
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                checkpoint = root / f"{mode}.pt"
+                torch.save(
+                    _quantized_model(
+                        2, 1, 3, bits=14, rounding_policy_mode=mode,
+                    ).state_dict(),
+                    checkpoint,
+                )
+                output = root / "export"
+                manifest = export_fexlite_qat_rtl(
+                    checkpoint,
+                    output,
+                    golden_length=8,
+                    rounding_policy_mode=mode,
+                )
+                policy = manifest["quantization"]["rounding_policy"]
+                self.assertEqual(policy, rounding_policy_record(mode))
+                self.assertEqual(
+                    policy["boundaries"]["pre_hardswish_requantization"]
+                    == DISCARD_LSB_SIGNED_FLOOR,
+                    pre_floor,
+                )
+                self.assertEqual(
+                    policy["boundaries"][
+                        "post_hardswish_activation_requantization"
+                    ] == DISCARD_LSB_SIGNED_FLOOR,
+                    post_floor,
+                )
+                self.assertEqual(
+                    all(
+                        layer["hardswish_input"] is not None
+                        for layer in manifest["model"]["layers"][:-1]
+                    ),
+                    pre_floor,
+                )
+                _assert_zero_lsb(self, output / "manifest.json")
+
+    def test_global_floor_no_prehs_exports_wide_hardswish_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint = root / "global_floor_no_prehs.pt"
+            torch.save(
+                _quantized_model(
+                    2, 1, 3, bits=12,
+                    rounding_policy_mode=RESEARCH_GLOBAL_FLOOR_NO_PREHS,
+                ).state_dict(),
+                checkpoint,
+            )
+            output = root / "export"
+            manifest = export_fexlite_qat_rtl(
+                checkpoint, output, golden_length=8,
+                rounding_policy_mode=RESEARCH_GLOBAL_FLOOR_NO_PREHS,
+            )
+            boundaries = manifest["quantization"]["rounding_policy"]["boundaries"]
+            self.assertTrue(all(
+                boundaries[name] == DISCARD_LSB_SIGNED_FLOOR
+                for name in (
+                    "fex_feature_requantization",
+                    "post_hardswish_activation_requantization",
+                    "residual_output_requantization",
+                )
+            ))
+            self.assertTrue(all(
+                layer["hardswish_input"] is None
+                for layer in manifest["model"]["layers"][:-1]
+            ))
+            _assert_zero_lsb(self, output / "manifest.json")
+
+    def test_prehs_floor_preserves_rne_fex_and_residual_boundaries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint = root / "prehs_floor.pt"
+            torch.save(
+                _quantized_model(
+                    2, 1, 3, bits=14,
+                    rounding_policy_mode=PREHS_FLOOR,
+                ).state_dict(),
+                checkpoint,
+            )
+            output = root / "export"
+            manifest = export_fexlite_qat_rtl(
+                checkpoint, output, golden_length=8,
+                rounding_policy_mode=PREHS_FLOOR,
+            )
+            boundaries = manifest["quantization"]["rounding_policy"][
+                "boundaries"
+            ]
+            self.assertEqual(
+                boundaries["fex_feature_requantization"],
+                ROUND_TO_NEAREST_TIES_TO_EVEN,
+            )
+            self.assertEqual(
+                boundaries["residual_output_requantization"],
+                ROUND_TO_NEAREST_TIES_TO_EVEN,
+            )
+            self.assertEqual(
+                boundaries["pre_hardswish_requantization"],
+                DISCARD_LSB_SIGNED_FLOOR,
+            )
+            self.assertEqual(
+                boundaries["post_hardswish_activation_requantization"],
+                DISCARD_LSB_SIGNED_FLOOR,
+            )
+            _assert_zero_lsb(self, output / "manifest.json")
+
+    def test_global_floor_v2_manifest_binds_all_boundaries_and_roundtrips(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint = root / "global_floor.pt"
+            torch.save(
+                _quantized_model(
+                    2, 1, 3, bits=14,
+                    rounding_policy_mode=GLOBAL_FLOOR,
+                ).state_dict(),
+                checkpoint,
+            )
+            output = root / "export"
+            manifest = export_fexlite_qat_rtl(
+                checkpoint,
+                output,
+                golden_length=16,
+                golden_seed=31,
+                rounding_policy_mode=GLOBAL_FLOOR,
+            )
+            policy = manifest["quantization"]["rounding_policy"]
+            self.assertEqual(policy, rounding_policy_record(GLOBAL_FLOOR))
+            self.assertEqual(
+                manifest["quantization"]["raw_input"]["rounding"],
+                ROUND_TO_NEAREST_TIES_TO_EVEN,
+            )
+            self.assertEqual(
+                manifest["quantization"]["dpd_output"]["rounding"],
+                DISCARD_LSB_SIGNED_FLOOR,
+            )
+            for layer in manifest["model"]["layers"]:
+                self.assertEqual(
+                    layer["weight"]["rounding"],
+                    ROUND_TO_NEAREST_TIES_TO_EVEN,
+                )
+                if layer["bias"] is not None:
+                    self.assertEqual(
+                        layer["bias"]["rounding"],
+                        ROUND_TO_NEAREST_TIES_TO_EVEN,
+                    )
+            self.assertTrue(all(
+                layer["hardswish_input"] is not None
+                for layer in manifest["model"]["layers"][:-1]
+            ))
+            self.assertIn(
+                "conv0_hardswish_input",
+                manifest["golden_vectors"]["files"],
+            )
+            _assert_zero_lsb(self, output / "manifest.json")
+
+            with self.assertRaisesRegex(ValueError, "does not match checkpoint"):
+                export_fexlite_qat_rtl(
+                    checkpoint,
+                    root / "wrong_mode",
+                    golden_length=4,
+                    rounding_policy_mode="prehs_floor",
+                )
+
+    def test_v2_validator_rejects_policy_digest_and_stored_code_floor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoint = root / "global_floor.pt"
+            torch.save(
+                _quantized_model(
+                    2, 1, 3, bits=8,
+                    rounding_policy_mode=GLOBAL_FLOOR,
+                ).state_dict(),
+                checkpoint,
+            )
+            output = root / "export"
+            export_fexlite_qat_rtl(checkpoint, output, golden_length=4)
+            manifest_path = output / "manifest.json"
+            original = json.loads(manifest_path.read_text())
+
+            altered = json.loads(json.dumps(original))
+            altered["quantization"]["rounding_policy"][
+                "capability_sha256"
+            ] = "0" * 64
+            manifest_path.write_text(json.dumps(altered, indent=2) + "\n")
+            with self.assertRaisesRegex(ValueError, "capability_sha256"):
+                verify_exported_golden(manifest_path)
+
+            altered = json.loads(json.dumps(original))
+            altered["model"]["layers"][0]["weight"]["rounding"] = (
+                DISCARD_LSB_SIGNED_FLOOR
+            )
+            manifest_path.write_text(json.dumps(altered, indent=2) + "\n")
+            with self.assertRaisesRegex(ValueError, "weight.rounding"):
+                verify_exported_golden(manifest_path)
+
+            altered = json.loads(json.dumps(original))
+            altered["quantization"]["raw_input"]["rounding"] = (
+                DISCARD_LSB_SIGNED_FLOOR
+            )
+            manifest_path.write_text(json.dumps(altered, indent=2) + "\n")
+            with self.assertRaisesRegex(ValueError, "raw_input.rounding"):
+                verify_exported_golden(manifest_path)
+
+            altered = json.loads(json.dumps(original))
+            altered["model"]["layers"][0]["bias"]["rounding"] = (
+                DISCARD_LSB_SIGNED_FLOOR
+            )
+            manifest_path.write_text(json.dumps(altered, indent=2) + "\n")
+            with self.assertRaisesRegex(ValueError, "stored bias rounding"):
+                verify_exported_golden(manifest_path)
+
     def test_toy_h2_l1_k3_spec_export_is_atomic_and_bit_exact(self):
         with tempfile.TemporaryDirectory() as directory:
             tmp_path = Path(directory)
@@ -82,7 +345,7 @@ class FExLiteQATRTLExportTests(unittest.TestCase):
             self.assertEqual(
                 loaded["format"], "opendpd_fexlite_qat_rtl_export"
             )
-            self.assertEqual(loaded["format_version"], 1)
+            self.assertEqual(loaded["format_version"], 2)
             self.assertEqual(loaded["model"]["hidden_channels"], 2)
             self.assertEqual(loaded["model"]["temporal_layers"], 1)
             self.assertEqual(loaded["model"]["kernel_size"], 3)
